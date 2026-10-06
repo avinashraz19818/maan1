@@ -1,0 +1,13 @@
+.p7-expired{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(10,16,28,.72);padding:20px}
+.p7-expired__card{width:min(360px,100%);background:#fff;border-radius:14px;padding:28px 22px 22px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+.p7-expired__ico{width:64px;height:64px;margin:0 auto 12px;border-radius:50%;background:#fee2e2;color:#dc2626;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;line-height:1}
+.p7-expired h2{margin:0 0 8px;font-size:22px;color:#111}
+.p7-expired p{margin:0 0 18px;color:#555;font-size:14px;line-height:1.45}
+.p7-expired a{display:block;background:#1f6feb;color:#fff;text-decoration:none;border-radius:8px;padding:12px;font-weight:700}
+body.is-expired .qr-wrap,body.is-expired #qrcode{filter:grayscale(1) blur(2px);pointer-events:none;opacity:.45}
+body.arupi .p7-expired__card{background:#15202c;color:#e8eef6}
+body.arupi .p7-expired h2{color:#fff}
+body.arupi .p7-expired p{color:#9aabbd}
+body.arupi .p7-expired a{background:#2fd37a;color:#062}
+body.gaax .p7-expired a{background:#6a1b9a}
+body.wiki .p7-expired a{background:#1e4fd7}

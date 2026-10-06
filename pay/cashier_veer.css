@@ -1,0 +1,35 @@
+*,*::before,*::after{box-sizing:border-box}
+html,body.veer{margin:0;padding:0;min-height:100%;min-height:100dvh;background:#07150e;color:#e8fff2;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+.veer-shell{max-width:480px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column}
+.veer-top{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+  background:linear-gradient(180deg,#0f3d24,#07150e);position:sticky;top:0;z-index:2}
+.veer-top h1{margin:0;font-size:18px;font-weight:800;letter-spacing:.02em}
+.veer-back{color:#8cffb8;text-decoration:none;font-size:28px;line-height:1;width:32px}
+.veer-timer{font-variant-numeric:tabular-nums;font-weight:700;color:#2fd37a;background:#12381f;
+  padding:4px 10px;border-radius:999px;font-size:13px}
+.veer-scroll{padding:8px 16px 32px}
+.veer-amt{background:#0d2a18;border:1px solid #1f6b3d;border-radius:16px;padding:18px 16px;text-align:center;margin-bottom:12px}
+.veer-amt-lab{margin:0;color:#9ad4b2;font-size:13px}
+.veer-amt-val{margin:6px 0 10px;font-size:36px;font-weight:800;color:#fff}
+.veer-copy,.veer-ghost,.veer-submit{appearance:none;border:0;border-radius:999px;cursor:pointer;font-weight:700}
+.veer-copy{background:#2fd37a;color:#062;padding:8px 14px;font-size:13px}
+.veer-hint{color:#9ad4b2;font-size:13px;text-align:center;margin:0 0 12px}
+.veer-qr{background:#fff;border-radius:16px;min-height:240px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;width:min(260px,100%);padding:16px}
+.veer-err{color:#b42318;text-align:center;padding:12px}
+.veer-vpa{display:flex;align-items:center;justify-content:space-between;gap:8px;background:#0d2a18;
+  border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:14px}
+.veer-vpa button{background:transparent;color:#2fd37a;border:0;font-weight:700;cursor:pointer}
+.veer-save{text-align:center;margin:0 0 16px}
+.veer-ghost{background:#12381f;color:#8cffb8;padding:8px 16px}
+.veer-card{background:#0d2a18;border-radius:16px;padding:14px;margin-bottom:14px}
+.veer-card h2{margin:0 0 10px;font-size:15px}
+.veer-m{display:flex;align-items:center;justify-content:space-between;padding:12px 10px;margin:6px 0;
+  background:#12381f;border-radius:12px;color:#fff;text-decoration:none;font-weight:700}
+.veer-m::after{content:"›";color:#2fd37a;font-size:20px}
+.veer-card input{width:100%;padding:12px;border-radius:12px;border:1px solid #1f6b3d;background:#07150e;color:#fff;font-size:16px}
+.veer-submit{width:100%;margin-top:10px;background:#2fd37a;color:#062;padding:13px;font-size:16px}
+.veer-submit:disabled{opacity:.5}
+.utr-msg{min-height:1.2em;color:#9ad4b2;font-size:13px}
+.veer-oid{text-align:center;color:#5f8f73;font-size:12px}
+body.veer.is-expired .veer-scroll{filter:blur(2px)}

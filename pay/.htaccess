@@ -1,0 +1,14 @@
+RewriteEngine On
+RewriteBase /pay/
+
+<IfModule mod_authz_core.c>
+  <FilesMatch "\.(log|md|sql|bak)$">
+    Require all denied
+  </FilesMatch>
+</IfModule>
+
+# /pay/usdt → usdt.php (keep query string)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}.php -f
+RewriteRule ^([A-Za-z0-9_-]+)/?$ $1.php [L,QSA]

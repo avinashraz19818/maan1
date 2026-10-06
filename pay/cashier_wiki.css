@@ -1,0 +1,26 @@
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;min-height:100%;background:#eef3fb;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1a2a44}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.wk-shell{width:100%;max-width:640px;min-height:100dvh;margin:0 auto;background:#fff}
+.wk-top{background:#1e4fd7;color:#fff;display:flex;align-items:center;justify-content:center;position:relative;height:56px}
+.wk-brand{font-size:20px;font-weight:700}
+.wk-timer{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:#0b2f9e;border-radius:16px;padding:4px 10px;font-variant-numeric:tabular-nums;font-weight:700}
+.wk-upi-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 16px 0;color:#1e4fd7;font-weight:600}
+.wk-upi-row button{border:0;background:transparent;color:#1e4fd7;font-size:16px}
+.wk-scroll{padding:8px 18px 28px}
+.wk-amt{color:#c62828;font-size:22px;font-weight:800;margin:8px 0 4px}
+.wk-scan{text-align:center;margin:8px 0;font-size:14px}
+.qr-wrap{display:flex;justify-content:center;margin:8px auto;min-height:220px}
+#qrcode img,#qrcode canvas{display:block}
+.wk-save{text-align:center}
+.wk-save button{border:1px solid #c5d2ea;background:#fff;color:#1e4fd7;border-radius:6px;padding:6px 14px}
+.wk-apps{display:flex;flex-direction:column;gap:8px;margin:16px 0 4px}
+.wk-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #dbe4f3;border-radius:10px;text-decoration:none;color:#1a2a44;font-weight:700}
+.wk-row img{width:40px;height:40px;object-fit:contain;border-radius:8px;background:#f3f6fb}
+.wk-utr-lab{margin:18px 0 8px;font-weight:700}
+.wk-input{width:100%;border:0;background:#f3f6fb;border-radius:24px;padding:14px 18px;font-size:14px;outline:none;text-align:center}
+.wk-submit{width:100%;margin-top:16px;border:0;background:#1e4fd7;color:#fff;font-size:16px;font-weight:700;border-radius:10px;padding:14px;min-height:48px}
+.wk-notice{margin-top:18px;border:1px solid #dbe4f3;border-radius:8px;padding:12px 14px;font-size:13px;color:#445}
+.wk-notice ol{margin:8px 0 0;padding-left:18px;line-height:1.5}
+.utr-msg{min-height:16px;font-size:12px;color:#1e4fd7;text-align:center}
+.err{color:#c62828;text-align:center}

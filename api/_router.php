@@ -425,52 +425,145 @@ function handle_spread_material(): void
 
 function handle_register(array $d): void
 {
-    $username = first_value($d, ['userName','username','mobile','phone','account'], '');
+    $username = trim((string)first_value($d, ['userName','username','mobile','phone','account'], ''));
     $password = (string)first_value($d, ['password','pwd'], '');
     if ($username === '') api_error('Username or mobile is required', 400, 400);
     if (strlen($password) < 6 || strlen($password) > 72) api_error('Password must be 6 to 72 characters', 400, 400);
-    $conn = db();
-    if (!$conn) api_error('Database unavailable', 500, 500);
-    $stmt = $conn->prepare('SELECT id FROM users WHERE username=? LIMIT 1');
-    $stmt->bind_param('s', $username);
-    $stmt->execute();
-    if ($stmt->get_result()->fetch_assoc()) api_error('User already exists', 1, 9);
+    $conn = db_or_fail();
+
+    // Duplicate check username aur mobile dono par (warna unique key error aata hai)
+    $stmt = @$conn->prepare('SELECT id FROM users WHERE username=? OR mobile=? LIMIT 1');
+    if ($stmt) {
+        $stmt->bind_param('ss', $username, $username);
+        $stmt->execute();
+        if ($stmt->get_result()->fetch_assoc()) api_error('User already exists', 1, 9);
+    }
+
     $hash = password_hash($password, PASSWORD_BCRYPT);
     $nick = 'Member' . strtoupper(substr(md5($username), 0, 8));
-    $invite = strtoupper(substr(md5($username . time()), 0, 6));
+    $invite = strtoupper(substr(md5($username . microtime(true) . random_int(1000, 9999)), 0, 6));
     $mobile = $username;
+    $email = trim((string)first_value($d, ['email','emailAddress','mail'], ''));
     $tenantUserId = (string)(APP_TENANT_ID . random_int(1000000000, 9999999999));
-    $parentId = 0; $parentCode = first_value($d, ['inviteCode','invitationCode','referralCode'], '');
-    if ($parentCode) { $ps = $conn->prepare('SELECT id FROM users WHERE invite_code=? LIMIT 1'); if ($ps) { $ps->bind_param('s', $parentCode); $ps->execute(); $pr=$ps->get_result()->fetch_assoc(); $parentId=(int)($pr['id']??0); } }
-    $stmt = $conn->prepare('INSERT INTO users(tenant_user_id, username, mobile, password_hash, nickname, photo, balance, vip_level, invite_code, role, status, created_at) VALUES(?,?,?,?,? ,"1",0,1,?,"user",1,NOW())');
-    $stmt->bind_param('ssssss', $tenantUserId, $username, $mobile, $hash, $nick, $invite);
-    if (!$stmt->execute()) api_error('Register failed', 1, 314);
-            $id = (int)$conn->insert_id;
-    if ($parentId > 0) { $up=$conn->prepare('UPDATE users SET agent_parent_id=? WHERE id=?'); if($up){$up->bind_param('ii',$parentId,$id);$up->execute();} }
+
+    $parentId = 0;
+    $parentCode = trim((string)first_value($d, ['inviteCode','invitationCode','referralCode'], ''));
+    if ($parentCode !== '') {
+        $ps = @$conn->prepare('SELECT id FROM users WHERE invite_code=? LIMIT 1');
+        if ($ps) { $ps->bind_param('s', $parentCode); $ps->execute(); $pr = $ps->get_result()->fetch_assoc(); $parentId = (int)($pr['id'] ?? 0); }
+    }
+
+    // Column-aware insert: imported/legacy database me har column zaroori nahi hota,
+    // aur NOT NULL extra column ki wajah se pura INSERT fail ho jata tha.
+    $known = dw_table_columns($conn, 'users');
+    if ($known === []) {
+        $known = ['tenant_user_id','username','mobile','password_hash','nickname','photo','balance','vip_level','invite_code','role','status','created_at'];
+    }
+    $candidates = [
+        'tenant_user_id' => $tenantUserId,
+        'username' => $username,
+        'mobile' => $mobile,
+        'email' => $email,
+        'password_hash' => $hash,
+        'password' => md5($password), // legacy column (agar table me hai)
+        'nickname' => $nick,
+        'photo' => '1',
+        'balance' => '0',
+        'safe_box' => '0',
+        'vip_level' => '1',
+        'invite_code' => $invite,
+        'role' => 'user',
+        'status' => '1',
+        'must_change_password' => '0',
+        'is_demo' => '0',
+        'agent_parent_id' => $parentId > 0 ? (string)$parentId : null,
+    ];
+    $cols = [];
+    $vals = [];
+    foreach ($candidates as $column => $value) {
+        if ($value === null || !in_array($column, $known, true)) continue;
+        $cols[] = $column;
+        $vals[] = (string)$value;
+    }
+    $hasCreatedAt = in_array('created_at', $known, true);
+    $sql = 'INSERT INTO users(`' . implode('`,`', $cols) . '`' . ($hasCreatedAt ? ',`created_at`' : '') . ') VALUES('
+        . implode(',', array_fill(0, count($vals), '?')) . ($hasCreatedAt ? ',NOW()' : '') . ')';
+    $stmt = @$conn->prepare($sql);
+    if (!$stmt) api_error('Register failed' . dw_debug_suffix($conn), 1, 314);
+    $types = str_repeat('s', count($vals));
+    $stmt->bind_param($types, ...$vals);
+    if (!@$stmt->execute()) api_error('Register failed' . dw_debug_suffix($conn), 1, 314);
+    $id = (int)$conn->insert_id;
+    if ($id <= 0) api_error('Register failed' . dw_debug_suffix($conn), 1, 314);
+
     $session = create_user_session($conn, $id, first_value($d, ['deviceId','deviceid','deviceNo','deviceType','fingerprint'], ''));
-    $user = ['id'=>$id,'tenant_user_id'=>$tenantUserId,'username'=>$username,'mobile'=>$mobile,'nickname'=>$nick,'photo'=>'1','balance'=>0,'safe_box'=>0,'vip_level'=>1,'invite_code'=>$invite,'role'=>'user','status'=>1,'login_session_token'=>$session];
+    $user = ['id'=>$id,'tenant_user_id'=>$tenantUserId,'username'=>$username,'mobile'=>$mobile,'email'=>$email,'nickname'=>$nick,'photo'=>'1','balance'=>0,'safe_box'=>0,'vip_level'=>1,'invite_code'=>$invite,'role'=>'user','status'=>1,'login_session_token'=>$session];
     login_response($user, true);
 }
 
 function handle_login(array $d): void
 {
-    $username = (string)first_value($d, ['userName','username','mobile','phone','account'], '');
+    $username = trim((string)first_value($d, ['userName','username','mobile','phone','account'], ''));
     $password = (string)first_value($d, ['password','pwd'], '');
     if ($username === '' || $password === '') api_error('Username and password are required', 400, 400);
-    $conn = db();
-    if (!$conn) api_error('Database unavailable', 500, 500);
-    $stmt = $conn->prepare('SELECT * FROM users WHERE username=? OR mobile=? OR email=? LIMIT 1');
+    $conn = db_or_fail();
+    $stmt = @$conn->prepare('SELECT * FROM users WHERE username=? OR mobile=? OR email=? LIMIT 1');
+    if (!$stmt) api_error('Login is unavailable right now' . dw_debug_suffix($conn), 500, 500);
     $stmt->bind_param('sss', $username, $username, $username);
     $stmt->execute();
     $user = $stmt->get_result()->fetch_assoc();
-    if (!$user || (isset($user['status']) && (int)$user['status'] !== 1)) api_error('User does not exist', 101, 101);
-    if (!password_verify($password, $user['password_hash'] ?? '')) api_error('Password error', 1, 1);
-    $stmt = $conn->prepare('UPDATE users SET last_login_at=NOW(), ip_last=?, device_id=? WHERE id=?');
-    $uid = (int)$user['id']; $ip = $_SERVER['REMOTE_ADDR'] ?? ''; $deviceId = first_value($d, ['deviceId','deviceid','deviceNo','deviceType','fingerprint'], ''); if ($stmt) { $stmt->bind_param('ssi', $ip, $deviceId, $uid); $stmt->execute(); }
+    if (!$user) api_error('User does not exist', 101, 101);
+    if (isset($user['status']) && (int)$user['status'] !== 1) api_error('Account disabled', 101, 101);
+    // bcrypt + legacy md5/sha256/plain password sab verify hote hain
+    if (!dw_verify_user_password($user, $password)) api_error('Password error', 1, 1);
+    // Purana md5/plain password ko bcrypt me upgrade kar do
+    if (!@password_verify($password, dw_user_stored_hash($user))) {
+        dw_store_user_password($conn, (int)$user['id'], $password);
+    }
+    $uid = (int)$user['id'];
+    $ip = substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
+    $deviceId = client_device_id($d);
+    dw_touch_login($conn, $uid, $ip, $deviceId);
     $user['login_session_token'] = create_user_session($conn, $uid, $deviceId);
-    $ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 250); $log=$conn->prepare('INSERT INTO user_login_logs(user_id,ip,user_agent,device_id,created_at) VALUES(?,?,?,?,NOW())'); if($log){$log->bind_param('isss',$uid,$ip,$ua,$deviceId);$log->execute();}
+    $ua = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 250); $log=@$conn->prepare('INSERT INTO user_login_logs(user_id,ip,user_agent,device_id,created_at) VALUES(?,?,?,?,NOW())'); if($log){$log->bind_param('isss',$uid,$ip,$ua,$deviceId);$log->execute();}
     $user['ip_last']=$ip; $user['device_id']=$deviceId;
     login_response($user, false);
+}
+
+/**
+ * last_login_at / ip_last / device_id update — legacy tables me kuch columns
+ * missing ho sakte hain, isliye fallback chain use hoti hai.
+ */
+function dw_touch_login(mysqli $conn, int $uid, string $ip, string $deviceId): void
+{
+    if ($uid <= 0) return;
+    $known = dw_table_columns($conn, 'users');
+    $sets = [];
+    if ($known === [] || in_array('last_login_at', $known, true)) $sets[] = 'last_login_at=NOW()';
+    if (in_array('ip_last', $known, true)) $sets[] = 'ip_last=?';
+    if (in_array('device_id', $known, true)) $sets[] = 'device_id=?';
+    if ($sets === []) return;
+    $sql = 'UPDATE users SET ' . implode(',', $sets) . ' WHERE id=?';
+    $stmt = @$conn->prepare($sql);
+    if (!$stmt) return;
+    $hasIp = in_array('ip_last=?', $sets, true);
+    $hasDevice = in_array('device_id=?', $sets, true);
+    if ($hasIp && $hasDevice) { $stmt->bind_param('ssi', $ip, $deviceId, $uid); }
+    elseif ($hasIp) { $stmt->bind_param('si', $ip, $uid); }
+    elseif ($hasDevice) { $stmt->bind_param('si', $deviceId, $uid); }
+    else { $stmt->bind_param('i', $uid); }
+    @$stmt->execute();
+}
+
+/**
+ * Debug mode on ho to MySQL error message API response me bhej deta hai,
+ * taaki cPanel par problem turant samajh aa jaye.
+ */
+function dw_debug_suffix(?mysqli $conn): string
+{
+    if (!defined('APP_DEBUG_ERRORS') || !APP_DEBUG_ERRORS) return '';
+    $err = $conn ? (string)$conn->error : '';
+    return $err !== '' ? ': ' . $err : '';
 }
 
 function handle_auto_login(array $d): void { login_response(require_login_user(), false); }

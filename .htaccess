@@ -41,8 +41,26 @@ RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
 # /web/config → PHP shim
 RewriteRule ^web/config/?$ web/config.php [L,QSA]
 
-# Same-origin Maanwin API — full /api/Controller/Action path
-RewriteRule ^api(/.*)?$ api_proxy.php [L,QSA]
+# ---------------------------------------------------------------------------
+# Same-origin LOCAL PHP API  ->  /api/Controller/Action  ->  api/_router.php
+# (yahi aapke cPanel MySQL me login/register karta hai)
+#
+# BUG FIX: pehle yaha "RewriteRule ^api(/.*)?$ api_proxy.php [L,QSA]" tha.
+# api_proxy.php har /api request ko https://maanwin16.com (dusre server) par
+# bhej deta tha, isliye:
+#   * register successful dikhta tha, par user aapke database/admin me nahi aata tha
+#   * database me maujood user login par "wrong password / user not found" deta tha
+# ---------------------------------------------------------------------------
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^api/([A-Za-z0-9_]+)/([A-Za-z0-9_]+)/?$ api/_router.php?path=$1/$2 [L,QSA]
+
+# Deep/extra API paths (3+ segments) bhi local router par bhejo
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^api/([A-Za-z0-9_/]+?)/?$ api/_router.php?path=$1 [L,QSA]
+
+# Remote upstream proxy — DISABLED.
+# Sirf tab enable karein jab aap jaan-boojh kar dusre server ka API chahte hain:
+# RewriteRule ^api(/.*)?$ api_proxy.php [L,QSA]
 
 # Live lottery issue JSON (do not use stale webapi/kv/issue/*.html)
 RewriteRule ^webapi/kv/issue/([A-Za-z0-9_]+)/?$ webapi_proxy.php [L,QSA]

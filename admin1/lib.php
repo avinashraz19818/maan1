@@ -97,19 +97,14 @@ function dw_admin_login(mysqli $conn, string $username, string $password): array
         dw_admin_log_login($conn, (int)$admin['id'], $username, false, 'inactive');
         return [false, 'User account is inactive (status is 0). Set status=1 in MySQL users table.'];
     }
-    if (!dw_password_verify($password, (string)$admin['password_hash'])) {
+    if (!dw_verify_user_password($admin, $password)) {
         dw_admin_log_login($conn, (int)($admin['id'] ?? 0), $username, false, 'invalid_credentials');
         return [false, 'Invalid password. (Ensure password matches the hash or plain text in database).'];
     }
 
     // Auto-upgrade plain or md5 password to standard bcrypt
-    if (!password_verify($password, (string)$admin['password_hash'])) {
-        $newHash = password_hash($password, PASSWORD_BCRYPT);
-        $upStmt = @$conn->prepare('UPDATE users SET password_hash=? WHERE id=?');
-        if ($upStmt) {
-            $upStmt->bind_param('si', $newHash, $admin['id']);
-            $upStmt->execute();
-        }
+    if (!password_verify($password, dw_user_stored_hash($admin))) {
+        dw_store_user_password($conn, (int)$admin['id'], $password);
     }
 
     session_regenerate_id(true);

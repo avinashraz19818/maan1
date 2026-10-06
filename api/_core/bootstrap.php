@@ -31,6 +31,91 @@ if (!function_exists('dw_password_verify')) {
     }
 }
 
+if (!function_exists('dw_table_columns')) {
+    /**
+     * Table ke real columns (lowercase). Imported/legacy database ka schema
+     * har install me same nahi hota, isliye insert/update column-aware rakha gaya hai.
+     */
+    function dw_table_columns(mysqli $conn, string $table): array
+    {
+        if (!isset($GLOBALS['DW_TABLE_COLUMNS']) || !is_array($GLOBALS['DW_TABLE_COLUMNS'])) {
+            $GLOBALS['DW_TABLE_COLUMNS'] = [];
+        }
+        $table = (string) preg_replace('/[^A-Za-z0-9_]/', '', $table);
+        if ($table === '') return [];
+        if (isset($GLOBALS['DW_TABLE_COLUMNS'][$table])) return $GLOBALS['DW_TABLE_COLUMNS'][$table];
+        $cols = [];
+        $res = @$conn->query('SHOW COLUMNS FROM `' . $table . '`');
+        if (!($res instanceof mysqli_result)) return [];
+        while ($row = $res->fetch_assoc()) {
+            $field = strtolower((string) ($row['Field'] ?? ''));
+            if ($field !== '') $cols[] = $field;
+        }
+        $res->free();
+        $GLOBALS['DW_TABLE_COLUMNS'][$table] = $cols;
+        return $cols;
+    }
+}
+
+if (!function_exists('dw_user_password_fields')) {
+    /**
+     * users table me password kis/kis column me store hota hai.
+     * Naya schema: password_hash (bcrypt). Purana/imported schema: password (md5).
+     */
+    function dw_user_password_fields(mysqli $conn): array
+    {
+        $cols = dw_table_columns($conn, 'users');
+        $fields = [];
+        if ($cols === [] || in_array('password_hash', $cols, true)) $fields[] = 'password_hash';
+        if (in_array('password', $cols, true)) $fields[] = 'password';
+        return $fields === [] ? ['password_hash'] : $fields;
+    }
+}
+
+if (!function_exists('dw_user_stored_hash')) {
+    function dw_user_stored_hash(array $row): string
+    {
+        foreach (['password_hash', 'password'] as $key) {
+            $value = trim((string) ($row[$key] ?? ''));
+            if ($value !== '') return $value;
+        }
+        return '';
+    }
+}
+
+if (!function_exists('dw_verify_user_password')) {
+    /**
+     * Login password check — bcrypt / md5 / sha256 / plaintext sab support karta hai,
+     * aur password_hash ke saath legacy `password` column dono dekhta hai.
+     */
+    function dw_verify_user_password(array $row, string $password): bool
+    {
+        if ($password === '') return false;
+        return dw_password_verify($password, dw_user_stored_hash($row));
+    }
+}
+
+if (!function_exists('dw_store_user_password')) {
+    /**
+     * Password ko safe bcrypt me upgrade karke save karta hai (jo column maujood ho).
+     */
+    function dw_store_user_password(mysqli $conn, int $uid, string $password): bool
+    {
+        if ($uid <= 0 || $password === '') return false;
+        $bcrypt = password_hash($password, PASSWORD_BCRYPT);
+        $ok = false;
+        foreach (dw_user_password_fields($conn) as $field) {
+            $value = $field === 'password_hash' ? $bcrypt : md5($password);
+            $stmt = @$conn->prepare('UPDATE users SET `' . $field . '`=? WHERE id=?');
+            if (!$stmt) continue;
+            $stmt->bind_param('si', $value, $uid);
+            if (@$stmt->execute()) $ok = true;
+        }
+        return $ok;
+    }
+}
+
+
 if (!defined('PUBLIC_ROOT')) {
     define('PUBLIC_ROOT', dirname(__DIR__, 2));
 }
@@ -42,15 +127,41 @@ function db(): ?mysqli
 {
     static $conn = null;
     if (class_exists('mysqli') && $conn instanceof mysqli) return $conn;
+    // CLI/maintenance script ya automated test apna connection inject kar sakta hai.
+    // $GLOBALS HTTP request se populate nahi hota, isliye ye safe hai.
+    if (isset($GLOBALS['DW_DB_CONN']) && $GLOBALS['DW_DB_CONN'] instanceof mysqli) {
+        $conn = $GLOBALS['DW_DB_CONN'];
+        return $conn;
+    }
     if (!class_exists('mysqli')) { error_log('mysqli extension is not enabled'); return null; }
     if (function_exists('mysqli_report')) { mysqli_report(MYSQLI_REPORT_OFF); }
     $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
     if ($conn->connect_errno) {
+        $GLOBALS['DW_DB_ERROR'] = (string) $conn->connect_error;
         error_log('DB connection failed: ' . $conn->connect_error);
         return null;
     }
     $conn->set_charset('utf8mb4');
     if (defined('AUTO_INSTALL_TABLES') && AUTO_INSTALL_TABLES) { ensure_database($conn); }
+    return $conn;
+}
+
+/**
+ * db() jaisa hi, par connection fail hone par saaf JSON error deta hai
+ * (silent 500 / HTML error page ki jagah).
+ */
+function db_or_fail(): mysqli
+{
+    $conn = db();
+    if (!$conn) {
+        $detail = (string) ($GLOBALS['DW_DB_ERROR'] ?? '');
+        api_error(
+            'Database connection failed. api/_core/config.php me DB_HOST / DB_NAME / DB_USER / DB_PASS sahi set karein.'
+            . ($detail !== '' ? ' MySQL: ' . $detail : ''),
+            500,
+            500
+        );
+    }
     return $conn;
 }
 
@@ -149,6 +260,23 @@ function bearer_token(): string
         ?? ($_SERVER['Authorization'] ?? '');
     if (!$auth && isset($_SERVER['REDIRECT_REDIRECT_HTTP_AUTHORIZATION'])) {
         $auth = $_SERVER['REDIRECT_REDIRECT_HTTP_AUTHORIZATION'];
+    }
+    // LiteSpeed / CGI setups kabhi-kabhi header ka case badal dete hain.
+    if (!$auth && is_array($headers)) {
+        foreach ($headers as $name => $value) {
+            if (strtolower((string) $name) === 'authorization') {
+                $auth = (string) $value;
+                break;
+            }
+        }
+    }
+    if (!$auth) {
+        foreach ($_SERVER as $name => $value) {
+            if (preg_match('/^(?:REDIRECT_)*HTTP_AUTHORIZATION$/i', (string) $name) && is_string($value) && $value !== '') {
+                $auth = $value;
+                break;
+            }
+        }
     }
     if (stripos($auth, 'Bearer ') === 0) return trim(substr($auth, 7));
     return '';
@@ -534,7 +662,7 @@ function ensure_database(mysqli $conn): void
     $hasSettings = @$conn->query("SELECT setting_value FROM settings WHERE setting_key='auto_install_version' LIMIT 1");
     if ($hasSettings instanceof mysqli_result) {
         $row = $hasSettings->fetch_assoc();
-        if (($row['setting_value'] ?? '') === $version) { ensure_lottery_columns($conn); ensure_bonus_vip_tables($conn); ensure_v12_tables($conn); ensure_v13_tables($conn); ensure_v14_tables($conn); ensure_v19_tables($conn); ensure_v22_tables($conn); ensure_v24_tables($conn); ensure_v32_wallet_tables($conn); ensure_v33_tables($conn); ensure_v34_tables($conn); return; }
+        if (($row['setting_value'] ?? '') === $version) { ensure_auth_columns($conn); ensure_lottery_columns($conn); ensure_bonus_vip_tables($conn); ensure_v12_tables($conn); ensure_v13_tables($conn); ensure_v14_tables($conn); ensure_v19_tables($conn); ensure_v22_tables($conn); ensure_v24_tables($conn); ensure_v32_wallet_tables($conn); ensure_v33_tables($conn); ensure_v34_tables($conn); return; }
     }
 
     $schema = get_auto_install_sql($version);
@@ -545,6 +673,7 @@ function ensure_database(mysqli $conn): void
             error_log('AUTO_INSTALL SQL failed: ' . $conn->error . ' SQL=' . substr($sql, 0, 300));
         }
     }
+    ensure_auth_columns($conn);
     ensure_lottery_columns($conn);
     ensure_bonus_vip_tables($conn);
     ensure_v12_tables($conn);
@@ -556,6 +685,61 @@ function ensure_database(mysqli $conn): void
     ensure_v32_wallet_tables($conn);
     ensure_v33_tables($conn);
     ensure_v34_tables($conn);
+}
+
+/**
+ * Imported/legacy `users` table me login-register ke zaroori columns missing ho
+ * sakte hain (jaise password_hash / role / status). Non-destructive tarike se
+ * sirf missing columns add kiye jaate hain — koi existing data drop nahi hota.
+ */
+function ensure_auth_columns(mysqli $conn): void
+{
+    $cols = dw_table_columns($conn, 'users');
+    if ($cols === []) return; // table abhi bana nahi -> auto-install create karega
+
+    $want = [
+        'tenant_user_id' => "ALTER TABLE users ADD COLUMN tenant_user_id VARCHAR(32) NOT NULL DEFAULT ''",
+        'mobile' => 'ALTER TABLE users ADD COLUMN mobile VARCHAR(40) DEFAULT NULL',
+        'email' => 'ALTER TABLE users ADD COLUMN email VARCHAR(160) DEFAULT NULL',
+        'password_hash' => "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''",
+        'nickname' => "ALTER TABLE users ADD COLUMN nickname VARCHAR(120) NOT NULL DEFAULT ''",
+        'photo' => "ALTER TABLE users ADD COLUMN photo VARCHAR(255) DEFAULT '1'",
+        'balance' => 'ALTER TABLE users ADD COLUMN balance DECIMAL(18,2) NOT NULL DEFAULT 0',
+        'safe_box' => 'ALTER TABLE users ADD COLUMN safe_box DECIMAL(18,2) NOT NULL DEFAULT 0',
+        'vip_level' => 'ALTER TABLE users ADD COLUMN vip_level INT NOT NULL DEFAULT 1',
+        'invite_code' => 'ALTER TABLE users ADD COLUMN invite_code VARCHAR(20) DEFAULT NULL',
+        'role' => "ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user'",
+        'status' => 'ALTER TABLE users ADD COLUMN status TINYINT NOT NULL DEFAULT 1',
+        'must_change_password' => 'ALTER TABLE users ADD COLUMN must_change_password TINYINT NOT NULL DEFAULT 0',
+        'created_at' => 'ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP',
+        'last_login_at' => 'ALTER TABLE users ADD COLUMN last_login_at DATETIME DEFAULT NULL',
+    ];
+    $added = [];
+    foreach ($want as $column => $sql) {
+        if (in_array($column, $cols, true)) continue;
+        if (@$conn->query($sql)) $added[] = $column;
+    }
+    if ($added !== []) {
+        unset($GLOBALS['DW_TABLE_COLUMNS']['users']); // cache refresh
+    }
+
+    // Purana md5/plain password `password` column me ho to use password_hash me copy kar do,
+    // warna login hamesha "wrong password" dega.
+    if (in_array('password', $cols, true)) {
+        @$conn->query("UPDATE users SET password_hash=password WHERE (password_hash IS NULL OR password_hash='') AND password IS NOT NULL AND password<>''");
+    }
+
+    // Agar role column abhi add hua hai aur koi admin hi nahi bacha, to 'admin'
+    // username wale account ko admin bana do (existing admin ko touch nahi karta).
+    if (in_array('role', $added, true)) {
+        $rs = @$conn->query("SELECT COUNT(*) c FROM users WHERE role='admin'");
+        if ($rs instanceof mysqli_result) {
+            $row = $rs->fetch_assoc();
+            if ((int) ($row['c'] ?? 0) === 0) {
+                @$conn->query("UPDATE users SET role='admin' WHERE LOWER(username)='admin' LIMIT 1");
+            }
+        }
+    }
 }
 
 function lottery_public_result(string $gameCode, string $issueNumber, array $result, int $openTimeMs): array

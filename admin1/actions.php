@@ -40,12 +40,12 @@ function dw_admin_handle_post(mysqli $conn, array $admin, array $permissions): v
             $confirm = dw_post_string('confirm_password');
             if (strlen($new) < 10 || $new !== $confirm) throw new RuntimeException('New password must be at least 10 characters and both entries must match.');
             $id = (int)$admin['id'];
-            $stmt = $conn->prepare('SELECT password_hash FROM users WHERE id=? FOR UPDATE');
+            $stmt = $conn->prepare('SELECT * FROM users WHERE id=? FOR UPDATE');
             $stmt->bind_param('i', $id); $stmt->execute(); $row = $stmt->get_result()->fetch_assoc();
-            if (!$row || !password_verify($current, (string)$row['password_hash'])) throw new RuntimeException('Current password is incorrect.');
-            $hash = password_hash($new, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare('UPDATE users SET password_hash=?,must_change_password=0,last_password_change_at=NOW() WHERE id=?');
-            $stmt->bind_param('si', $hash, $id); $stmt->execute();
+            if (!$row || !dw_verify_user_password($row, $current)) throw new RuntimeException('Current password is incorrect.');
+            dw_store_user_password($conn, $id, $new);
+            @$conn->query('UPDATE users SET must_change_password=0 WHERE id=' . $id);
+            @$conn->query('UPDATE users SET last_password_change_at=NOW() WHERE id=' . $id);
             dw_admin_audit($conn, $admin, 'admin_change_own_password', 'admin', $id);
             dw_flash('success', 'Admin password changed successfully.');
             dw_redirect('dashboard');

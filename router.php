@@ -1,7 +1,7 @@
 <?php
 /**
  * PHP built-in server router (mirrors .htaccess for local dev).
- * /api goes through the same-origin Maanwin proxy.
+ * /api is served by the LOCAL PHP backend (api/_router.php + MySQL).
  */
 $uri = urldecode(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '/');
 $root = __DIR__;
@@ -12,8 +12,20 @@ if ($uri === '/web/config' || $uri === '/web/config/') {
     return true;
 }
 
-if (preg_match('#^/api(/|$)#', $uri)) {
-    require $root . '/api_proxy.php';
+if (preg_match('#^/api/([A-Za-z0-9_]+)/([A-Za-z0-9_]+)/?$#', $uri, $m)) {
+    $localPhp = $root . '/api/' . $m[1] . '/' . $m[2] . '.php';
+    if (is_file($localPhp)) {
+        require $localPhp;
+        return true;
+    }
+    $_GET['path'] = $m[1] . '/' . $m[2];
+    require $root . '/api/_router.php';
+    return true;
+}
+
+if (preg_match('#^/api/[A-Za-z0-9_/]+#', $uri)) {
+    $_GET['path'] = ltrim(substr($uri, 4), '/');
+    require $root . '/api/_router.php';
     return true;
 }
 

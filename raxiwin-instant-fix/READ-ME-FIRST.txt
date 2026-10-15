@@ -1,0 +1,118 @@
+================================================================================
+  RaxiWin — V2: "RESULT KO PICHE KARO" (period alignment) + INSTANT RESULT
+================================================================================
+Base: avinashraz19818/raxiwin  commit 35718c3
+Ye ZIP v1 (instant-result) ko supersede karta hai. Agar aapne v1 upload nahi
+kiya to seedha v2 upload kar do (v1 ki zaroorat nahi).
+
+--------------------------------------------------------------------------------
+1) AAPKI BAAT — "result ko piche karo" — ab exactly wahi kiya hai
+--------------------------------------------------------------------------------
+Aapki live site se maine khud check kiya (2026-10-15, WinGo_30S):
+    /WinGo/WinGo_30S/GetHistoryIssuePage.json
+
+Purana code har row ka PERIOD NUMBER ek period PEEGHE kar deta tha, lekin saamne
+wala RESULT wahi purana rehta tha. Matlab:
+
+    Screen par period      Result dikh raha tha     Asli (kaunsa period ka)
+    2026...1103            4                       1104 ka   <-- ek period AAGE
+    2026...1102            4                       1103 ka
+    2026...1101            5                       1102 ka
+    2026...1100            6                       1101 ka
+
+Isi liye aapko lag raha tha ki result ek period aage chal raha hai.
+
+Ab v2 me:
+
+    Screen par period      Result
+    2026...1103            4     <- 1103 ka apna result
+    2026...1102            5     <- 1102 ka apna result
+    2026...1101            6     <- 1101 ka apna
+    2026...1100            9     <- 1100 ka apna
+
+Yaani result ek period PICHE ho gaya — jis period ke saamne jo number hai, wo
+usi period ka hai. Yehi official feed ka pairing hai aur yehi settlement bhi
+use karta hai (bet 1103 par lagi to usi 1103 ka result count hoga).
+
+List ka look bilkul same rehta hai: top row = jo period abhi bet ke liye khula
+hai usse ek piche. (Jo period abhi chal raha hai uska result list me nahi aata —
+wo agle round me apne label ke saath aa jata hai.) 10 rows hi milti hain.
+
+--------------------------------------------------------------------------------
+2) INSTANT RESULT (v1 ka feature, ab thoda safer)
+--------------------------------------------------------------------------------
+  * Is app me results table feed se ek period AAGE chalta hai — jo period screen
+    par "current" hai, uska result backend me already decided/closed hota hai.
+    Isliye bet save hone ke baad usi response me win/loss + naya balance bhej
+    diya jata hai:
+        instantResult, issueNumber, premium, number, resultNumber, color,
+        settled, isWin, status, winAmount, winLoseAmount, balance
+  * Response se pehle us bet ko turant settle kar diya jata hai (sl_settle_issue)
+    — wallet credit + ledger usi waqt.
+  * Response miss ho gaya to GetWinLossResult poll bhi settle kar deta hai, to
+    pehle hi poll par win/loss mil jata hai.
+  * Period label kisi bhi jagah shift nahi hota — countdown/timer perfect.
+  * Agar us period ka result DB me na ho, to instant block chup chaap skip ho
+    jata hai (koi bana-banaya result nahi thopta) — bet normal flow se settle.
+  * OFF karna: app_settings me instant_result_enabled = 0.
+
+--------------------------------------------------------------------------------
+3) UPLOAD (cPanel)
+--------------------------------------------------------------------------------
+1. Pehle in 6 files ka backup le lo (rename .bak ya download).
+2. ZIP ko public_html me upload karke Extract (paths root ke hisaab se hain):
+       saas_lottery/bootstrap.php
+       saas_lottery/bootstrap_live_v3.php
+       saas_lottery/bootstrap_live_v4.php
+       draw-live-v4/index.php
+       draw/index.php          (isme koi change nahi hai — sirf yeh guarantee
+       draw-live-v3/index.php   ke liye hai ki v1 ka shift kisi file me na bacha ho)
+3. ZIP aur READ-ME-FIRST.txt delete kar do. Koi build/cache clear nahi chahiye.
+
+--------------------------------------------------------------------------------
+4) TEST
+--------------------------------------------------------------------------------
+1. WinGo 30S ya 1M kholo — countdown normal chalega (kuch nahi badla).
+2. History table dekho: har period ke saamne uska hi result (official feed
+   jaise). Purane se compare karne ke liye: 1102 ke saamne pehle 4 aata tha,
+   ab 5 aayega (jo 1102 ka asli result hai).
+3. Login theek hone ke baad bet lagao — bet lagte hi result pata chal jayega.
+
+NOTE: filhal aapki site ka login DB kharab hai — database club532583_rax1win me
+shonu_subjects / purani (legacy) tables hi nahi hain, isliye login 503 de raha
+hai. Uske liye alag ZIP hai:  raxiwin-login-503-fix.zip  (doctor us cPanel ki
+saari databases scan karta hai aur sahi DB dhoondh deta hai).
+Jab tak login nahi chalta, bet ka live test nahi ho sakta — par history
+alignment ka test abhi ho jayega (usme login ki zaroorat nahi).
+
+--------------------------------------------------------------------------------
+5) VERIFY (maine kya chalaya)
+--------------------------------------------------------------------------------
+PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par:
+  * syntax check: 6/6 files OK
+  * history transform ke 23 checks PASS, asli live data ke fixture par:
+      - bet-able period (1104) row hat gayi, top row 1103
+      - 1103 -> 4 (apna), 1102 -> 5 (pehle 4 dikhta tha = wahi purana bug)
+      - har row ka number = usi period ka result
+      - K3/TrxWinGo untouched, ceiling khaali ho to list waise hi, safety fallback
+      - purana relabel function aur label-shift helpers shipped files se gaye
+      - bet response me instant outcome, bet gate normal, poll settle hook mojood
+  * fixture: 2026-10-15 ko aapki live site se liya gaya WinGo_30S history + draw.
+
+--------------------------------------------------------------------------------
+6) ROLLBACK
+--------------------------------------------------------------------------------
+Backup ki hui 6 files wapas upload kar do, ya instant_result_enabled = 0 kar do
+(us se instant block off ho jayega; history alignment rahega).
+
+--------------------------------------------------------------------------------
+7) FILES IN THIS ZIP (7)
+--------------------------------------------------------------------------------
+   saas_lottery/bootstrap.php            (+173 / -1)
+   saas_lottery/bootstrap_live_v3.php    (+173 / -1)
+   saas_lottery/bootstrap_live_v4.php    (+173 / -1)
+   draw-live-v4/index.php                (history = apne period ka result)
+   draw/index.php                        (v1 ka shift hatane ke liye; warna same)
+   draw-live-v3/index.php                (same)
+   READ-ME-FIRST.txt                     (yahi file)
+================================================================================

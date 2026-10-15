@@ -87,8 +87,10 @@ Pending bets abhi settle karvane ke liye:  ...&settle=1
 
 Report me ye naya hai:
   * FILE VERSIONS ke saath har file ka sha256 + bytes + mtime
-  * BETS & SETTLEMENT: aapki last bets (status/payout), pending issues, kitne
-    ke result DB me hain, aur (settle=1 par) sweep ka result
+  * BETS & SETTLEMENT: aapki last bets (status/payout), har user ki WALLET row
+    (shonu_kaichila.motta — row na mile to payout nahi chadhta aur bet pending
+    reh jati hai; page yahin bata dega), pending issues, kitne ke result DB me
+    hain, aur (settle=1 par) sweep ka result
   * HTTP SELF-PROBE: server KHUD apni site se draw/history maangta hai —
       - "app ka URL" (bina query) aur "fresh key" (?cb=...) dono
       - headers: server / cf-cache-status / age / x-litespeed-cache /

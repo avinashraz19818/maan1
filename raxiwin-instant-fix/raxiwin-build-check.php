@@ -278,6 +278,26 @@ if (!$conn) {
                 $row['stake'], $row['payout'], ($row['result_premium'] === null ? '-' : $row['result_premium']), $row['created_at']));
         }
     }
+    // Settlement fail hone ki sab se badi wajah: wallet row (shonu_kaichila) na hona.
+    // Winning bet ka payout usi row par chadhta hai; row na mile to settle rukta hai.
+    $userIds = array();
+    foreach ($rows as $row) {
+        $userIds[(int) $row['user_id']] = true;
+    }
+    if ($userIds) {
+        $ids = implode(',', array_map('intval', array_keys($userIds)));
+        $wallets = array();
+        $res = @$conn->query('SELECT balakedara,motta FROM shonu_kaichila WHERE balakedara IN (' . $ids . ')');
+        while ($res && ($row = $res->fetch_assoc())) {
+            $wallets[(int) $row['balakedara']] = (string) $row['motta'];
+        }
+        foreach (array_keys($userIds) as $uid) {
+            bc_line('  wallet user ' . $uid . '        : ' . (isset($wallets[$uid])
+                ? 'motta=' . $wallets[$uid]
+                : 'ROW NAHI MILI shonu_kaichila me  <-- settlement fail hoga (payout nahi chadhega!)'));
+        }
+    }
+
     $pending = array();
     $res = @$conn->query("SELECT DISTINCT issue_number FROM saas_lottery_bets WHERE game_code='WinGo_30S' AND status='pending' ORDER BY issue_number DESC LIMIT 50");
     if ($res) {

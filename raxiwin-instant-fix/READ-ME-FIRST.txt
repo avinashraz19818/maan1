@@ -1,44 +1,53 @@
 ================================================================================
-  RaxiWin — V4: GAME + RESULT dono ek period piche (final)
+  RaxiWin — V5: period + result piche (v4 jaisa hi) AUR BET BHI LAGEGI
 ================================================================================
 Base: avinashraz19818/raxiwin  commit 35718c3
-Ye ZIP pichhle teeno ZIPs ko supersede karta hai. Seedha ye upload karo.
+Ye ZIP pichhle chaaro ZIPs ko supersede karta hai. Seedha ye upload karo.
 DB schema change: koi nahi.  Frontend / config change: koi nahi.
 
 --------------------------------------------------------------------------------
-1) ASLI MECHANISM JO PAKDA GAYA (isi wajah se pichhli baar gadbad hui)
+1) 404 "Betting for the current issue has stopped" KYUN AAYA (asli wajah)
 --------------------------------------------------------------------------------
-App ke JS me (assets/js/useLottery.hook): 
-      e.issue = String(BigInt(issueData.current.issueNumber) - 1n)
-      e.countdown = ... issueData.current.endTime ...
-Matlab: app draw ke "current" se KHUD 1 ghata kar apna period banata hai, aur
-countdown draw ke current.endTime se chalata hai.
+Maine aapki live site ko bahar se probe kiya (2026-10-15, usi minute jab aapne
+screenshot bheja tha):
 
-Iska matlab:
-  * Draw ka "current" 1104 -> app ka period 1103  (app ka apna 1 piche)
-  * Agar draw ka label hi ek period piche kar diya (mera pichhla ZIP) to
-    app ka period 1102 ho jata hai — period piche ho gaya ✓ (aapne yahi dekha)
-  * Lekin history/result tab bhi 1103 tak hi piche tha -> result game ke period
-    se ek period AAGE dikh raha tha ✗ (aapki ab wali complaint)
+  https://<site>/draw-live-v4/WinGo/WinGo_30S.json
+      previous ...234, current ...235, next ...236      <- YE UNSHIFTED hai
+  https://<site>/WinGo/WinGo_30S/GetHistoryIssuePage.json
+      top row ...234 (4, red), totalPage 50, totalCount 500   <- YE BHI UNSHIFTED
 
-Isliye v4 me: period ka shift (v3) + result/history ka ceiling (1102) + bet ka
-bettable issue (1102) — teeno ek doosre se exactly match karte hain.
+Yaani server par abhi bhi PURANA build (v2 jaisa) chal raha hai: draw ka label
+ek period piche nahi hua aur history ka ceiling bhi nahi laga. (Aapne v3/v4 ZIP
+upload kiya tha, lekin file server par lagti nahi dikhi — ho sakta hai galat
+ZIP extract hua ho, files ek folder andar chali gayi ho, ya opcache purani file
+serve kar raha ho. Isi liye neeche build-check script diya hai — wo 30 second me
+saaf bata dega ki server par kaun sa build hai.)
+
+Us purane build par v4 ka bet gate sirf EK hi period accept karta tha (raw-2,
+yaani 1102). App us waqt raw-1 (1103) bhej raha tha -> gate ne reject kar diya
+-> 404 "Betting for the current issue has stopped".
+(Aapka login theek tha — bet request gate tak pahunchi thi, isliye 404 aur 503
+dono me fark hai.)
+
+Fix (v5): bet gate ab AAKHRI 3 CLOSED periods accept karta hai. Chahe app
+"served current" bheje (raw-1) ya "displayed period" bheje (raw-2), ya latency
+ki wajah se ek period aur purana (raw-3) — teeno par bet lag jayegi, aur teeno
+already closed periods hain, isliye result usi response me aayega.
 
 --------------------------------------------------------------------------------
 2) AB SCREEN PAR KYA DIKHEGA (aapki live site ka 30S data, 2026-10-15)
 --------------------------------------------------------------------------------
 Provider (asli feed)      : previous 1103, current 1104, next 1105
 Game (screen) ka period   : 1102          <- period ek period piche ✓
-Countdown                 : normal (1104 ke window ka end time, kuch nahi badla)
+Countdown                 : normal (kuch nahi badla)
 History (top row)         : 1102 -> 5     <- usi period ka apna result ✓
 History (next rows)       : 1101 -> 6, 1100 -> 9, 1099 -> 4, 1098 -> 5, ...
-Bet lagayi (1102)         : usi waqt result = 5 (wahi jo top row par hai), naya
-                            balance bhi usi response me
-Bet-able period se aage ki koi row history me nahi aati (1103/1104 chhup jate
-hain) — isliye "result aage" wala effect poora khatam.
+Bet lagayi (1102 ya 1103): usi waqt result (wahi number jo history ke top row
+                           par hai) + naya balance, usi response me ✓
+Bet-able period se aage ki row history me nahi aati (1103/1104 chhup jate hain).
 
 Yaani: game ka period, history ka top row aur bet ka result — teeno ek hi period
-ke. Poora game (period + result) ek period piche.
+ke. Poora game (period + result) ek period piche, aur bet bhi lagti hai.
 
 --------------------------------------------------------------------------------
 3) VERSIONS KA SAFAR (transparency)
@@ -49,11 +58,46 @@ ke. Poora game (period + result) ek period piche.
  v2 (mera)     : history me har row ka apna result (sahi) par draw shift nahi
  v3 (mera)     : draw ka label ek piche -> period piche ho gaya ✓, par history/
                  result 1103 tak -> result ek period aage ✗
- v4 (ye ZIP)   : period piche + history/result ceiling bhi piche + bet gate
-                 bhi usi period par -> sab consistent ✓
+ v4 (mera)     : period + history/result ceiling + bet gate — sab 1102 par ✓
+                 (lekin gate sirf usi ek period par chalta tha, isliye purane
+                  build par 404 de raha tha)
+ v5 (ye ZIP)   : v4 ka sab kuch + BET GATE TOLERANT (aakhri 3 closed periods) +
+                 draw adapter self-contained (purane bootstrap ke saath bhi
+                 chalega) + build-check script ✓
 
 --------------------------------------------------------------------------------
-4) UPLOAD (cPanel)
+4) PEHLE YE KARO: BUILD CHECK (30 second, sirf ek baar)
+--------------------------------------------------------------------------------
+Upload karne ke baad browser me kholo:
+      https://<aapki-site>/raxiwin-build-check.php?key=b7f3c1a94e2d5068
+(yahi file is ZIP me hai. Key ke bina page "forbidden" deta hai, koi data
+ public nahi hota.)
+
+Ye page print karega:
+  * har file ka build (v5 bootstrap / v5 adapter / shift ON (v3+) ...) + mtime
+  * opcache: purani file cache me hai ya nahi (stale entry + kaise theek kare)
+  * settings: instant_result_enabled ki asli value
+  * live period chain: raw current, shift1 (raw-1), shift2 (raw-2), draw me
+    served current, app par jo period dikhega, aur bet accept hone wale periods
+  * VERDICT: seedha "sab theek" ya "ye file upload karo"
+
+Agar report 20-30 second se zyada atki lage (provider feed slow), to
+...?key=b7f3c1a94e2d5068&quick=1 kholo — wo network skip karke DB se chalega.
+Report ke baad is file ko delete kar dena (aap chahein to rakh sakte hain, ye
+sirf read-only report hai).
+
+Agar report kahe ki file purani hai / opcache stale hai:
+  * saas_lottery/bootstrap*.php aur draw-live-v4/index.php ki mtime nayi honi
+    chahiye. Purani ho to upload dobara karo (public_html ke andar hi, ek folder
+    andar nahi).
+  * opcache stale ho to host se "OPcache reset" karwao, ya public_html me
+    .user.ini me ye do line daal do:
+        opcache.validate_timestamps=1
+        opcache.revalidate_freq=0
+    (kuch hosts par .user.ini kaam nahi karta — tab host ko ticket karo.)
+
+--------------------------------------------------------------------------------
+5) UPLOAD (cPanel)
 --------------------------------------------------------------------------------
 1. Pehle in 6 files ka backup (rename .bak ya download).
 2. ZIP ko public_html me upload karke Extract (paths root ke hisaab se hain):
@@ -63,25 +107,27 @@ ke. Poora game (period + result) ek period piche.
        draw-live-v4/index.php
        draw/index.php
        draw-live-v3/index.php
-3. ZIP + READ-ME-FIRST.txt delete kar do. Koi build/cache clear nahi chahiye.
+       raxiwin-build-check.php     (sirf check ke liye — baad me delete)
+3. Section 4 ka build-check chalao, VERDICT dekho.
+4. ZIP + READ-ME-FIRST.txt (+ baad me build-check) delete kar do. Koi build
+   step nahi hai. Frontend / config / .env me kuch change nahi karna.
 
 --------------------------------------------------------------------------------
-5) TEST (login ki zaroorat nahi)
+6) TEST (login ke baad)
 --------------------------------------------------------------------------------
-1. WinGo 30S / 1M / 3M / 5M kholo -> game ka period pichhle period se ek piche.
-2. History table: TOP ROW ka period = game ka period, aur uska number usi period
-   ka. Doosri row uska pichhla, aur so on.
-3. Countdown normal — timer kisi bhi waqt negative/ulta nahi hoga.
-4. Login theek hone ke baad bet lagao -> bet lagate hi win/loss + balance.
+1. WinGo 30S / 1M / 3M / 5M kholo -> game ka period aur history ka top row
+   dono ek hi period (aur provider ke current se ek piche).
+2. History: top row ka period = game ka period, uska number usi period ka.
+3. Countdown normal — timer ulta/negative nahi hoga.
+4. Bet lagao (auto select period chhodo, kuch mat badlo) -> bet lag jaye, aur
+   usi response me win/loss + naya balance turant screen par.
+5. K3 / TrxWinGo / 5D par koi change nahi dikhega (ye patch sirf WinGo par hai).
 
-NOTE: login abhi tak theek nahi hai (database club532583_rax1win me purani
-legacy tables hi nahi hain). Uske liye alag ZIP: raxiwin-login-503-fix.zip.
-
 --------------------------------------------------------------------------------
-6) VERIFY (maine kya chalaya)
+7) VERIFY (maine kya chalaya)
 --------------------------------------------------------------------------------
-PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par 64/64 checks PASS:
-  * Syntax: 6/6 files OK (dono versions)
+PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par 86/86 checks PASS:
+  * Syntax: 7/7 files OK (dono versions)
   * Game shift: 30S 1104->1103 (previous 1103->1102, next 1105->1104),
     1M/3M/5M me bhi exactly ek period piche, din ki boundary bhi sahi,
     startTime/endTime untouched (countdown safe)
@@ -90,27 +136,32 @@ PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par 64/64 checks PASS:
       app ka period       = 1102
       history ceiling     = 1102
       bettable issue      = 1102   -> chaaron match ✓
+  * Bet gate (v5): candidates = 1103, 1102, 1101 — teeno accept; toggle OFF
+    (instant_result_enabled=0) par tolerant gate band, purana strict behaviour
+    wapas; K3 / TrxWinGo par zero asar
   * History: 12 rows fetch -> page 1 par do row (1104, 1103) hat kar 10 rows,
     top row = app ka period, har row apna result (1102->5, 1101->6, 1100->9)
-  * Bet: displayed period ka bet accept, save hote hi settle, response me
-    instantResult / number / isWin / winAmount / balance
-  * K3 / TrxWinGo par zero asar; toggle instant_result_enabled = 0 -> sab off
-    (purana behaviour wapas)
+  * Bet: accept hote hi settle, response me instantResult / number / isWin /
+    winAmount / balance
+  * Build-check script: 7/7 smoke checks PASS (galat key -> forbidden, v5 detect,
+    opcache section, DB na milne par graceful, verdict sahi)
 
 --------------------------------------------------------------------------------
-7) ROLLBACK
+8) ROLLBACK
 --------------------------------------------------------------------------------
 Backup ki hui 6 files wapas upload kar do, ya admin setting
-instant_result_enabled = 0 kar do.
+instant_result_enabled = 0 kar do (tolerant gate + instant result dono band ho
+jate hain, purana behaviour wapas aa jata hai).
 
 --------------------------------------------------------------------------------
-8) FILES IN THIS ZIP (7)
+9) FILES IN THIS ZIP (8)
 --------------------------------------------------------------------------------
-   saas_lottery/bootstrap.php            (+214 / -2)
-   saas_lottery/bootstrap_live_v3.php    (+214 / -2)
-   saas_lottery/bootstrap_live_v4.php    (+214 / -2)
-   draw-live-v4/index.php                (history/result ceiling bhi ek piche)
-   draw-live-v3/index.php                (draw label ek period piche)
-   draw/index.php                        (draw label ek period piche)
+   saas_lottery/bootstrap.php            (v5 tolerant bet gate)
+   saas_lottery/bootstrap_live_v3.php    (v5 tolerant bet gate)
+   saas_lottery/bootstrap_live_v4.php    (v5 tolerant bet gate)
+   draw-live-v4/index.php                (shift + ceiling, self-contained)
+   draw-live-v3/index.php                (shift, legacy guard ke saath)
+   draw/index.php                        (shift, legacy guard ke saath)
+   raxiwin-build-check.php               (diagnostic — baad me delete)
    READ-ME-FIRST.txt                     (yahi file)
 ================================================================================

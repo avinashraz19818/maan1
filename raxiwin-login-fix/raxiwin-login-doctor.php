@@ -1,31 +1,38 @@
 <?php
 /**
- * RaxiWin login doctor — read-only diagnostic for the "login par Service not
- * available (HTTP 503)" problem.
+ * RaxiWin login doctor v2 — database / login diagnostic.
+ *
+ * WHY v2: v1 showed that the database this site is connected to
+ * (club532583_rax1win) is a *fresh empty* database — it only contains the 31
+ * tables that the app creates for itself, no legacy data at all (no
+ * shonu_subjects, no shonu_kaichila, no saas_lottery_*). So v2 also scans every
+ * other database of this cPanel account and tells you which one really holds
+ * the users/bets, plus it can switch config/database.php over for you.
  *
  * HOW TO USE
- *   1. Upload this file into the site root (next to index.php).
- *   2. Open:  https://<your-domain>/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
- *   3. Read the VERDICT block at the bottom, or send it to me.
+ *   1. Upload into the site root (next to index.php).
+ *   2. Open: https://<your-domain>/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
+ *   3. Extra switches:
+ *        &db=<database>    inspect that database instead of the configured one
+ *        &setdb=<database> point config/database.php at that database
+ *                          (a backup config/database.php.bak-<time> is written)
+ *        &fix=1            safe additive repair of the inspected user table
  *   4. DELETE this file when you are done.
  *
- * Add &fix=1 to the URL and the doctor will also run the safe, additive repairs
- * (add missing legacy columns, widen the akshinak token column) and then
- * re-test the login queries for you.
- *
- * Prints no password, no secret and no user data — only counts, column names
- * and SQL error messages.
+ * Prints no password, no secret and no user data — only counts, names and SQL
+ * error messages.
  */
 
 $DOCTOR_KEY = 'b7f3c1a94e2d5068';
-$providedKey = (string)($_GET['key'] ?? '');
-if (!hash_equals($DOCTOR_KEY, $providedKey)) {
+if (!hash_equals($DOCTOR_KEY, (string)($_GET['key'] ?? ''))) {
     http_response_code(403);
     header('Content-Type: text/plain; charset=utf-8');
     echo "forbidden\n";
     exit;
 }
 $DOCTOR_FIX = (string)($_GET['fix'] ?? '') === '1';
+$DOCTOR_DB = trim((string)($_GET['db'] ?? ''));
+$DOCTOR_SETDB = trim((string)($_GET['setdb'] ?? ''));
 
 header('Content-Type: text/plain; charset=utf-8');
 
@@ -39,10 +46,12 @@ function dr_mask(string $value, int $keep = 4): string
 }
 function dr_bool($value): string { return $value ? 'YES' : 'no'; }
 
-dr_line('RAXIWIN LOGIN DOCTOR');
-dr_line('time (server): ' . date('Y-m-d H:i:s') . '   php ' . PHP_VERSION . '   fix-mode: ' . dr_bool($DOCTOR_FIX));
+dr_line('RAXIWIN LOGIN DOCTOR v2');
+dr_line('time (server): ' . date('Y-m-d H:i:s') . '   php ' . PHP_VERSION . '   fix-mode: ' . dr_bool($DOCTOR_FIX)
+    . ($DOCTOR_DB !== '' ? '   inspect-db: ' . $DOCTOR_DB : '')
+    . ($DOCTOR_SETDB !== '' ? '   set-db: ' . $DOCTOR_SETDB : ''));
 
-/* ------------------------------------------------------------------ setup */
+/* ------------------------------------------------------------------ config */
 $configFile = __DIR__ . '/config/database.php';
 $dbConfig = null;
 if (is_readable($configFile)) {
@@ -52,7 +61,7 @@ dr_head('database config');
 dr_line('config/database.php : ' . (is_readable($configFile) ? 'found' : 'MISSING'));
 dr_line('mysqli extension    : ' . dr_bool(function_exists('mysqli_init')));
 if (!is_array($dbConfig)) {
-    dr_line('VERDICT: config/database.php could not be read as an array. Nothing else can be tested.');
+    dr_line('VERDICT: config/database.php could not be read as an array. Fix that file first.');
     exit;
 }
 $dbHost = (string)($dbConfig['host'] ?? '');
@@ -61,7 +70,7 @@ $dbUser = (string)($dbConfig['user'] ?? '');
 $dbPass = (string)($dbConfig['password'] ?? '');
 $dbName = (string)($dbConfig['database'] ?? '');
 dr_line('host/port           : ' . dr_mask($dbHost) . ':' . $dbPort);
-dr_line('database            : ' . dr_mask($dbName));
+dr_line('database            : ' . $dbName);
 dr_line('user                : ' . dr_mask($dbUser));
 
 mysqli_report(MYSQLI_REPORT_OFF);
@@ -86,23 +95,22 @@ if (!$connected) {
     exit;
 }
 dr_line('server version      : ' . (string)$conn->server_info);
-$dbNameRow = dr_rows($conn, 'SELECT DATABASE() AS db_name');
-dr_line('current database    : ' . (string)($dbNameRow[0]['db_name'] ?? '?'));
 
-/** Run a statement, never fatal. */
-function dr_query(mysqli $conn, string $sql)
+/* ---------------------------------------------------------------- helpers */
+function dr_query($conn, string $sql)
 {
     try {
         $res = $conn->query($sql);
-        if ($res === false) return ['ok' => false, 'err' => (string)$conn->error];
-        return ['ok' => true, 'res' => $res];
+        if ($res === false) return array('ok' => false, 'err' => (string)$conn->error);
+        return array('ok' => true, 'res' => $res);
     } catch (Throwable $e) {
-        return ['ok' => false, 'err' => $e->getMessage()];
+        return array('ok' => false, 'err' => $e->getMessage());
     }
 }
-function dr_rows(mysqli $conn, string $sql): array
+
+function dr_rows($conn, string $sql): array
 {
-    $out = [];
+    $out = array();
     $r = dr_query($conn, $sql);
     if ($r['ok'] && $r['res'] instanceof mysqli_result) {
         while ($row = $r['res']->fetch_assoc()) $out[] = $row;
@@ -110,13 +118,36 @@ function dr_rows(mysqli $conn, string $sql): array
     }
     return $out;
 }
+
+function dr_single($conn, string $sql, $default = 'n/a')
+{
+    $r = dr_query($conn, $sql);
+    if (!$r['ok']) return $default;
+    if (!($r['res'] instanceof mysqli_result)) return $default;
+    $row = $r['res']->fetch_row();
+    $r['res']->free();
+    return $row ? $row[0] : $default;
+}
+
+/** Does this database have the legacy tables, and how many users does it hold? */
+function dr_probe_database($conn, string $db): array
+{
+    $quoted = '`' . str_replace('`', '', $db) . '`';
+    $out = array('users' => null, 'tables' => array(), 'total_tables' => null);
+    $out['total_tables'] = dr_single($conn, 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=' . "'" . $conn->real_escape_string($db) . "'", null);
+    $out['users'] = dr_single($conn, 'SELECT COUNT(*) FROM ' . $quoted . '.`shonu_subjects`', null);
+    foreach (array('shonu_kaichila', 'thevani', 'saas_lottery_bets', 'saas_lottery_results', 'saas_lottery_settings', 'nirvahaka_shonu') as $table) {
+        $out['tables'][$table] = dr_single($conn, 'SELECT COUNT(*) FROM ' . $quoted . '.`' . $table . '`', null);
+    }
+    return $out;
+}
+
 /**
- * Type aware SET fragments for the session columns, so a numeric ishonup or a
- * datetime shonullgnt can not produce a false failure.
+ * Type aware SET fragments for the session columns.
  */
 function dr_session_set(array $columns): array
 {
-    $sets = [];
+    $sets = array();
     $types = array_change_key_case($columns, CASE_LOWER);
     if (isset($types['shonupwderr'])) $sets[] = '`shonupwderr`=0';
     if (isset($types['ishonup'])) {
@@ -132,51 +163,94 @@ function dr_session_set(array $columns): array
     return $sets;
 }
 
-function dr_count(mysqli $conn, string $table): string
-{
-    $r = dr_query($conn, 'SELECT COUNT(*) AS c FROM `' . $table . '`');
-    if (!$r['ok']) return 'n/a (' . $r['err'] . ')';
-    $row = $r['res']->fetch_assoc();
-    $r['res']->free();
-    return (string)($row['c'] ?? '?');
+/* ------------------------------------------------- all databases of account */
+dr_head('all databases of this cpanel account');
+$databases = array();
+$dbResult = dr_query($conn, 'SHOW DATABASES');
+if ($dbResult['ok'] && $dbResult['res'] instanceof mysqli_result) {
+    while ($row = $dbResult['res']->fetch_row()) $databases[] = (string)$row[0];
+    $dbResult['res']->free();
+}
+$systemDbs = array('information_schema', 'mysql', 'performance_schema', 'sys');
+$legacyCandidates = array();
+dr_line(sprintf('  %-34s %-8s %-8s %-8s %s', 'database', 'users', 'wallets', 'bets', 'notes'));
+foreach ($databases as $candidateDb) {
+    if (in_array(strtolower($candidateDb), $systemDbs, true)) continue;
+    $probe = dr_probe_database($conn, $candidateDb);
+    $note = '';
+    if ($probe['users'] !== null) {
+        $note = 'HAS shonu_subjects';
+        if ((int)$probe['users'] > 0) {
+            $note = 'LEGACY DATA (users=' . $probe['users'] . ')';
+            $legacyCandidates[] = array('db' => $candidateDb, 'users' => (int)$probe['users']);
+        }
+    } elseif ((int)$probe['total_tables'] > 0) {
+        $note = 'no legacy user table';
+    }
+    dr_line(sprintf('  %-34s %-8s %-8s %-8s %s',
+        $candidateDb,
+        $probe['users'] === null ? '-' : $probe['users'],
+        $probe['tables']['shonu_kaichila'] === null ? '-' : $probe['tables']['shonu_kaichila'],
+        $probe['tables']['saas_lottery_bets'] === null ? '-' : $probe['tables']['saas_lottery_bets'],
+        $note));
 }
 
-/* ---------------------------------------------------------------- tables */
-dr_head('tables');
-$tableList = dr_rows($conn, 'SHOW TABLES');
-dr_line('tables in this database : ' . count($tableList));
-$important = ['shonu_subjects', 'shonu_kaichila', 'thevani', 'nirvahaka_shonu', 'app_settings',
-    'app_notifications', 'saas_lottery_bets', 'saas_lottery_results', 'saas_lottery_settings', 'vip'];
-$missingTables = [];
-foreach ($important as $table) {
-    $exists = false;
-    $r = dr_query($conn, "SHOW TABLES LIKE '" . $conn->real_escape_string($table) . "'");
-    if ($r['ok'] && $r['res'] instanceof mysqli_result && $r['res']->num_rows > 0) $exists = true;
-    if (!$exists) $missingTables[] = $table;
-    dr_line(sprintf('  %-22s %-8s rows=%s', $table, $exists ? 'FOUND' : 'MISSING', $exists ? dr_count($conn, $table) : '-'));
+/* ------------------------------------------------------- inspect one db */
+$inspectDb = $DOCTOR_DB !== '' ? $DOCTOR_DB : $dbName;
+$inspectingOther = $inspectDb !== $dbName;
+if ($inspectDb !== '') {
+    $switched = dr_query($conn, 'USE `' . str_replace('`', '', $inspectDb) . '`');
+    if (!$switched['ok']) {
+        dr_line();
+        dr_line('could not open database ' . $inspectDb . ' : ' . $switched['err']);
+    }
+} elseif (!$inspectDb) {
+    dr_line();
+    dr_line('config has no database name.');
 }
+
+dr_head('inspecting database: ' . $inspectDb . ($inspectingOther ? '  (from ?db=)' : '  (configured)'));
+$currentDbName = (string)dr_single($conn, 'SELECT DATABASE()', '?');
+dr_line('current database    : ' . $currentDbName);
+
+$allTables = array();
+$tableResult = dr_query($conn, 'SHOW TABLES');
+if ($tableResult['ok'] && $tableResult['res'] instanceof mysqli_result) {
+    while ($row = $tableResult['res']->fetch_row()) $allTables[] = (string)$row[0];
+    $tableResult['res']->free();
+}
+dr_line('tables here         : ' . count($allTables));
+dr_line('  ' . implode(', ', $allTables));
+
+$systemTables = array('app_settings', 'app_payment_methods', 'app_deposit_requests', 'app_chat_sessions',
+    'app_chat_messages', 'app_audit_logs', 'app_admin_permissions', 'app_user_presence', 'app_user_preferences',
+    'app_system_events', 'app_support_tickets', 'app_game_control', 'app_bet_requests', 'app_turntable_draws',
+    'app_provider_transactions', 'app_site_messages', 'app_notifications', 'app_notification_reads',
+    'app_spin_prizes', 'app_channel_bonus_rules', 'vip', 'tb_agent', 'shonu_turntable', 'shonu_turntable_spins',
+    'app_spin_daily_grants', 'app_spin_transfers', 'deyya', 'deyyamrici', 'upi_address', 'upi_withdrawal', 'demo');
+$foreign = array_values(array_diff($allTables, $systemTables));
+dr_line('non-app tables      : ' . count($foreign) . ($foreign ? '  -> ' . implode(', ', $foreign) : '  (only the tables the app creates for itself)'));
+dr_line('legacy shonu_subjects present: ' . dr_bool(in_array('shonu_subjects', $allTables, true)));
 
 /* ------------------------------------------------- shonu_subjects schema */
 dr_head('shonu_subjects columns');
-$userColumns = [];
-$columnRows = dr_rows($conn, 'SHOW FULL COLUMNS FROM `shonu_subjects`');
-foreach ($columnRows as $columnRow) {
-    $userColumns[strtolower((string)$columnRow['Field'])] = [
-        'type' => (string)$columnRow['Type'],
-        'null' => (string)$columnRow['Null'],
-        'default' => $columnRow['Default'],
-    ];
+$userColumns = array();
+foreach (dr_rows($conn, 'SHOW FULL COLUMNS FROM `shonu_subjects`') as $columnRow) {
+    $userColumns[strtolower((string)$columnRow['Field'])] = (string)$columnRow['Type'];
 }
 if (!$userColumns) {
-    dr_line('shonu_subjects is MISSING or could not be read. This is why login answers HTTP 503.');
+    dr_line('shonu_subjects is MISSING (or not readable) in ' . $inspectDb . '.');
 } else {
-    dr_line('columns found: ' . count($userColumns));
-    $needed = ['id', 'mobile', 'email', 'password', 'pwd', 'status', 'ishonup', 'codechorkamukala',
-        'shonupwderr', 'shonullgnt', 'akshinak', 'tnegaresunohs', 'createdate', 'code', 'owncode', 'privacy'];
+    dr_line('columns found: ' . count($userColumns) . '   rows: ' . dr_single($conn, 'SELECT COUNT(*) FROM `shonu_subjects`'));
+    $needed = array('id', 'mobile', 'email', 'password', 'pwd', 'status', 'ishonup', 'codechorkamukala',
+        'shonupwderr', 'shonullgnt', 'akshinak', 'tnegaresunohs', 'createdate', 'code', 'owncode', 'privacy');
     foreach ($needed as $name) {
         if (isset($userColumns[$name])) {
-            dr_line(sprintf('  %-18s %-22s null=%-3s %s', $name, $userColumns[$name]['type'], $userColumns[$name]['null'],
-                strpos($userColumns[$name]['type'], 'char') !== false && preg_match('/\((\d+)\)/', $userColumns[$name]['type'], $m) && (int)$m[1] < 512 && $name === 'akshinak' ? '<-- TOO SHORT for a JWT' : ''));
+            $flag = '';
+            if ($name === 'akshinak' && preg_match('/\((\d+)\)/', $userColumns[$name], $m) && (int)$m[1] < 512) {
+                $flag = '  <-- TOO SHORT for a JWT';
+            }
+            dr_line(sprintf('  %-18s %-22s%s', $name, $userColumns[$name], $flag));
         } else {
             dr_line(sprintf('  %-18s MISSING', $name));
         }
@@ -186,31 +260,29 @@ if (!$userColumns) {
 /* ----------------------------------------------------------- login tests */
 dr_head('login query tests');
 if ($userColumns) {
-    $refTestMobile = '0000000000';
-
-    $oldSelect = "SELECT id,mobile,password,status,ishonup,codechorkamukala,COALESCE(shonupwderr,0) FROM shonu_subjects WHERE mobile=? LIMIT 1";
-    $stmt = dr_query($conn, 'SELECT 1');
+    $dummyMobile = '0000000000';
     try {
-        $prepared = $conn->prepare($oldSelect);
+        $prepared = $conn->prepare("SELECT id,mobile,password,status,ishonup,codechorkamukala,COALESCE(shonupwderr,0) FROM shonu_subjects WHERE mobile=? LIMIT 1");
         if ($prepared === false) {
             dr_line('OLD login SELECT  : FAILED - ' . $conn->error);
         } else {
-            $prepared->bind_param('s', $refTestMobile);
+            $prepared->bind_param('s', $dummyMobile);
             $prepared->execute();
-            dr_line('OLD login SELECT  : OK (no rows for a dummy number = normal)');
             $prepared->close();
+            dr_line('OLD login SELECT  : OK');
         }
     } catch (Throwable $e) {
         dr_line('OLD login SELECT  : FAILED - ' . $e->getMessage());
     }
 
-    $available = array_intersect(['password', 'pwd'], array_keys($userColumns));
-    $newSelect = 'SELECT `id`,`mobile`' . ($available ? ',`' . implode('`,`', $available) . '`' : '')
+    $newSelect = 'SELECT `id`,`mobile`'
+        . (isset($userColumns['password']) ? ',`password`' : '')
+        . (isset($userColumns['pwd']) ? ',`pwd`' : '')
         . (isset($userColumns['status']) ? ',`status`' : '')
         . (isset($userColumns['ishonup']) ? ',`ishonup`' : '')
         . (isset($userColumns['codechorkamukala']) ? ',`codechorkamukala`' : '')
         . (isset($userColumns['shonupwderr']) ? ',`shonupwderr`' : '')
-        . " FROM `shonu_subjects` WHERE `mobile`='" . $conn->real_escape_string($refTestMobile) . "' LIMIT 1";
+        . " FROM `shonu_subjects` WHERE `mobile`='" . $conn->real_escape_string($dummyMobile) . "' LIMIT 1";
     $r = dr_query($conn, $newSelect);
     dr_line('NEW login SELECT  : ' . ($r['ok'] ? 'OK' : 'FAILED - ' . $r['err']));
 
@@ -218,8 +290,6 @@ if ($userColumns) {
     if ($sets) {
         $r = dr_query($conn, 'UPDATE `shonu_subjects` SET ' . implode(',', $sets) . ' WHERE `id`=0');
         dr_line('session UPDATE    : ' . ($r['ok'] ? 'OK (no rows touched)' : 'FAILED - ' . $r['err']));
-    } else {
-        dr_line('session UPDATE    : skipped, no session columns at all');
     }
 
     if (isset($userColumns['akshinak'])) {
@@ -228,17 +298,16 @@ if ($userColumns) {
         dr_line('akshinak 512 test : ' . ($r['ok'] ? 'OK' : 'FAILED (token too long for this column) - ' . $r['err']));
     }
 
-    /* token length vs column width */
     $functions = __DIR__ . '/developer-maruf/functions2.php';
     if (is_readable($functions)) {
         try {
             require_once $functions;
             if (function_exists('generate_jwt')) {
-                $doctorToken = generate_jwt(['alg' => 'HS256', 'typ' => 'JWT'], ['id' => 1, 'mobile' => '0000000000', 'status' => 1, 'expire' => time() + 3600]);
+                $doctorToken = generate_jwt(array('alg' => 'HS256', 'typ' => 'JWT'), array('id' => 1, 'mobile' => $dummyMobile, 'status' => 1, 'expire' => time() + 3600));
                 dr_line('JWT length        : ' . strlen($doctorToken) . ' characters');
-                if (isset($userColumns['akshinak']) && preg_match('/\((\d+)\)/', $userColumns['akshinak']['type'], $m)) {
+                if (isset($userColumns['akshinak']) && preg_match('/\((\d+)\)/', $userColumns['akshinak'], $m)) {
                     $declared = (int)$m[1];
-                    dr_line('akshinak column   : ' . $userColumns['akshinak']['type'] . ($declared < strlen($doctorToken) ? '  <-- TOO SHORT, this causes "Data too long" -> HTTP 503' : '  (fits)'));
+                    dr_line('akshinak column   : ' . $userColumns['akshinak'] . ($declared < strlen($doctorToken) ? '  <-- TOO SHORT -> "Data too long" -> HTTP 503' : '  (fits)'));
                 }
             }
         } catch (Throwable $e) {
@@ -246,8 +315,7 @@ if ($userColumns) {
         }
     }
 
-    /* password formats */
-    $format = ['empty' => 0, 'md5' => 0, 'bcrypt' => 0, 'sha1_sha256' => 0, 'other' => 0];
+    $format = array('empty' => 0, 'md5' => 0, 'bcrypt' => 0, 'sha1_sha256' => 0, 'other' => 0);
     if (isset($userColumns['password'])) {
         $rows = dr_rows($conn, 'SELECT `password` FROM `shonu_subjects` LIMIT 1000');
         foreach ($rows as $row) {
@@ -261,23 +329,21 @@ if ($userColumns) {
         dr_line('password formats  : total=' . count($rows) . ' ' . json_encode($format));
     }
 
-    /* register dry-run, always rolled back */
-    $registerColumns = ['mobile', 'email', 'password', 'code', 'code1', 'code2', 'code3', 'code4', 'code5',
-        'owncode', 'privacy', 'status', 'createdate', 'ip', 'ishonup', 'pwd', 'shonullgnt', 'tnegaresunohs', 'codechorkamukala'];
+    $registerColumns = array('mobile', 'email', 'password', 'code', 'code1', 'code2', 'code3', 'code4', 'code5',
+        'owncode', 'privacy', 'status', 'createdate', 'ip', 'ishonup', 'pwd', 'shonullgnt', 'tnegaresunohs', 'codechorkamukala');
     $insertable = array_values(array_intersect($registerColumns, array_keys($userColumns)));
     if ($insertable) {
         try {
             $conn->begin_transaction();
-            $values = [];
+            $values = array();
             foreach ($insertable as $column) {
                 if ($column === 'mobile') $values[] = "'9" . random_int(100000000, 999999999) . "'";
                 elseif ($column === 'status') $values[] = '1';
-                elseif (in_array($column, ['createdate', 'shonullgnt'], true)) $values[] = 'NOW()';
+                elseif (in_array($column, array('createdate', 'shonullgnt'), true)) $values[] = 'NOW()';
                 elseif ($column === 'ip') $values[] = "'127.0.0.1'";
                 else $values[] = "'doctor'";
             }
-            $insertSql = 'INSERT INTO `shonu_subjects` (`' . implode('`,`', $insertable) . '`) VALUES (' . implode(',', $values) . ')';
-            $r = dr_query($conn, $insertSql);
+            $r = dr_query($conn, 'INSERT INTO `shonu_subjects` (`' . implode('`,`', $insertable) . '`) VALUES (' . implode(',', $values) . ')');
             dr_line('register dry-run  : ' . ($r['ok'] ? 'OK (rolled back, no user created)' : 'FAILED - ' . $r['err']));
             $conn->rollback();
         } catch (Throwable $e) {
@@ -285,18 +351,20 @@ if ($userColumns) {
             try { $conn->rollback(); } catch (Throwable $ignored) {}
         }
     }
+} else {
+    dr_line('skipped - there is no shonu_subjects table in ' . $inspectDb . ' to test against.');
 }
 
 /* -------------------------------------------------------------- error log */
 dr_head('php error log (last matching lines)');
-$logCandidates = array_filter([
-    ini_get('error_log') ?: '',
+$logCandidates = array_filter(array(
+    ini_get('error_log') ? ini_get('error_log') : '',
     __DIR__ . '/error_log',
     dirname(__DIR__) . '/error_log',
     __DIR__ . '/php_errorlog',
     __DIR__ . '/logs/error_log',
     __DIR__ . '/admin/error_log',
-]);
+));
 $foundLog = false;
 foreach (array_unique($logCandidates) as $logPath) {
     if (!is_string($logPath) || $logPath === '' || !is_readable($logPath)) continue;
@@ -304,7 +372,7 @@ foreach (array_unique($logCandidates) as $logPath) {
     dr_line('-- ' . $logPath);
     $lines = @file($logPath, FILE_IGNORE_NEW_LINES);
     if (!is_array($lines)) { dr_line('   (not readable)'); continue; }
-    $matched = [];
+    $matched = array();
     foreach ($lines as $line) {
         if (stripos($line, '[Login]') !== false || stripos($line, '[database]') !== false || stripos($line, '[app_schema') !== false) {
             $matched[] = $line;
@@ -313,15 +381,12 @@ foreach (array_unique($logCandidates) as $logPath) {
     foreach (array_slice($matched, -15) as $line) dr_line('   ' . $line);
     if (!$matched) dr_line('   (no [Login] / [database] / [app_schema] lines yet)');
 }
-if (!$foundLog) {
-    dr_line('no readable error log found in the usual cPanel locations.');
-    dr_line('ask the host for the PHP error log, or check cPanel > Metrics > Errors.');
-}
+if (!$foundLog) dr_line('no readable error log found in the usual cPanel locations.');
 
 /* ------------------------------------------------------------------- fix */
-if ($DOCTOR_FIX) {
-    dr_head('repair (fix=1)');
-    $wanted = [
+if ($DOCTOR_FIX && $userColumns) {
+    dr_head('repair (fix=1) on ' . $inspectDb);
+    $wanted = array(
         'email' => 'VARCHAR(190) NULL',
         'ishonup' => 'VARCHAR(64) NULL',
         'codechorkamukala' => 'VARCHAR(190) NULL',
@@ -330,50 +395,109 @@ if ($DOCTOR_FIX) {
         'akshinak' => 'VARCHAR(512) NULL',
         'tnegaresunohs' => 'VARCHAR(255) NULL',
         'pwd' => "VARCHAR(255) NOT NULL DEFAULT ''",
-    ];
+    );
     foreach ($wanted as $name => $definition) {
-        if (isset($userColumns[$name])) { dr_line(sprintf('  %-18s already there (%s)', $name, $userColumns[$name]['type'])); continue; }
+        if (isset($userColumns[$name])) { dr_line(sprintf('  %-18s already there (%s)', $name, $userColumns[$name])); continue; }
         $r = dr_query($conn, 'ALTER TABLE `shonu_subjects` ADD COLUMN `' . $name . '` ' . $definition);
         dr_line(sprintf('  %-18s %s', $name, $r['ok'] ? 'ADDED' : 'FAILED - ' . $r['err']));
     }
-    if (isset($userColumns['akshinak']) && preg_match('/\((\d+)\)/', $userColumns['akshinak']['type'], $m) && (int)$m[1] < 512) {
+    if (isset($userColumns['akshinak']) && preg_match('/\((\d+)\)/', $userColumns['akshinak'], $m) && (int)$m[1] < 512) {
         $r = dr_query($conn, 'ALTER TABLE `shonu_subjects` MODIFY COLUMN `akshinak` VARCHAR(512) NULL');
         dr_line('  akshinak           : ' . ($r['ok'] ? 'widened to VARCHAR(512)' : 'FAILED - ' . $r['err']));
     }
-    dr_line();
-    dr_line('re-test after repair:');
-    $columnsAfter = [];
-    foreach (dr_rows($conn, 'SHOW FULL COLUMNS FROM `shonu_subjects`') as $columnRow) {
-        $columnsAfter[strtolower((string)$columnRow['Field'])] = (string)$columnRow['Type'];
+} elseif ($DOCTOR_FIX) {
+    dr_head('repair (fix=1)');
+    dr_line('nothing to repair here - this database has no shonu_subjects table at all.');
+}
+
+/* --------------------------------------------------------- switch database */
+if ($DOCTOR_SETDB !== '') {
+    dr_head('switch config/database.php to ' . $DOCTOR_SETDB);
+    $target = dr_probe_database($conn, $DOCTOR_SETDB);
+    if ($target['users'] === null) {
+        dr_line('REFUSED: ' . $DOCTOR_SETDB . ' has no shonu_subjects table (that would break the site too).');
+    } elseif ((int)$target['users'] < 1) {
+        dr_line('REFUSED: ' . $DOCTOR_SETDB . ' has a shonu_subjects table but 0 users in it.');
+        dr_line('         (use it only if you really want that empty database.)');
+    } else {
+        dr_line('target looks good: shonu_subjects users=' . $target['users']);
+        $stamp = date('Ymd-His');
+        $backup = $configFile . '.bak-' . $stamp;
+        $written = false;
+        if (is_readable($configFile) && is_writable(dirname($configFile))) {
+            try {
+                if (@copy($configFile, $backup)) {
+                    $newConfig = "<?php\n"
+                        . "/**\n * Rewritten by raxiwin-login-doctor on " . date('Y-m-d H:i:s') . ".\n"
+                        . " * Backup of the previous file: " . basename($backup) . "\n */\n"
+                        . "return array(\n"
+                        . "    'host' => " . var_export($dbHost, true) . ",\n"
+                        . "    'port' => " . (int)$dbPort . ",\n"
+                        . "    'user' => " . var_export($dbUser, true) . ",\n"
+                        . "    'password' => " . var_export($dbPass, true) . ",\n"
+                        . "    'database' => " . var_export($DOCTOR_SETDB, true) . ",\n"
+                        . "    'charset' => 'utf8mb4',\n"
+                        . ");\n";
+                    $written = (bool)@file_put_contents($configFile, $newConfig);
+                    dr_line($written ? 'config/database.php updated. Backup: ' . basename($backup)
+                        : 'could not write config/database.php (permissions). Backup was created.');
+                } else {
+                    dr_line('could not create a backup - refusing to change the config.');
+                }
+            } catch (Throwable $e) {
+                dr_line('config rewrite failed: ' . $e->getMessage());
+            }
+        } else {
+            dr_line('config/database.php or its folder is not writable by PHP.');
+            dr_line('Do it by hand in File Manager: set the "database" name to ' . $DOCTOR_SETDB);
+        }
+        if ($written) {
+            dr_line();
+            dr_line('NEXT: login dobara try karo. Problem rahe to doctor dobara kholo (bina setdb ke)');
+            dr_line('      aur naya report bhej do. Backup se wapas jaana ho to config/database.php.bak-' . $stamp . ' ko config/database.php kar do.');
+        }
     }
-    $prepared = $conn->prepare("SELECT id,mobile,password,status,ishonup,codechorkamukala,COALESCE(shonupwderr,0) FROM shonu_subjects WHERE mobile=? LIMIT 1");
-    dr_line('  OLD login SELECT  : ' . ($prepared === false ? 'FAILED - ' . $conn->error : 'OK'));
-    if ($prepared !== false) $prepared->close();
-    $sets = dr_session_set($columnsAfter);
-    if ($sets) {
-        $r = dr_query($conn, 'UPDATE `shonu_subjects` SET ' . implode(',', $sets) . ' WHERE `id`=0');
-        dr_line('  session UPDATE    : ' . ($r['ok'] ? 'OK' : 'FAILED - ' . $r['err']));
-    }
-    dr_line('  => ab login dobara try karo. Phir bhi problem ho to doctor dobara kholo aur VERDICT mujhe bhejo.');
 }
 
 /* --------------------------------------------------------------- verdict */
 dr_head('verdict');
-if (!$userColumns) {
-    dr_line('VERDICT 1: table shonu_subjects is MISSING (or not readable) in this database.');
-    dr_line('   Login and Register can only work after the legacy BDG user table is imported.');
-    dr_line('   (This is a database import problem, not a code problem.)');
-} elseif (!isset($userColumns['mobile'])) {
-    dr_line('VERDICT 2: shonu_subjects has no mobile column - login by phone can not work.');
-} elseif (!isset($userColumns['password']) && !isset($userColumns['pwd'])) {
-    dr_line('VERDICT 3: shonu_subjects has no password column.');
-} elseif (isset($userColumns['akshinak']) && preg_match('/\((\d+)\)/', $userColumns['akshinak']['type'], $m) && (int)$m[1] < 512) {
-    dr_line('VERDICT 4: akshinak is ' . $userColumns['akshinak']['type'] . ' - a modern JWT does not fit, MySQL strict mode');
-    dr_line('   raises "Data too long", the old Login.php turned that into HTTP 503.');
-    dr_line('   Run this page with &fix=1 (or just use the new Login.php, it widens the column itself).');
+$hasUserTable = in_array('shonu_subjects', $allTables, true);
+$legacyLine = '';
+if ($legacyCandidates) {
+    $parts = array();
+    foreach ($legacyCandidates as $candidate) $parts[] = $candidate['db'] . ' (users=' . $candidate['users'] . ')';
+    $legacyLine = implode(', ', $parts);
+}
+
+if (!$hasUserTable) {
+    dr_line('VERDICT A: database "' . $inspectDb . '" has NO shonu_subjects table.');
+    dr_line('  tables here = ' . count($allTables) . ', non-app tables = ' . count($foreign) . '.');
+    if (count($foreign) === 0) {
+        dr_line('  -> Ye bilkul khali/naya database hai; isme sirf wahi tabel hain jo app khud banata hai.');
+        dr_line('     Isi liye login aur register 503 dete hain: koi user, koi wallet, koi lottery table hi nahi hai.');
+    }
+    if ($legacyLine !== '') {
+        dr_line('  LEGACY DATA IS IN: ' . $legacyLine);
+        dr_line('  NEXT STEP: config/database.php me database name wahi kar do —');
+        dr_line('     ya doctor ko aise chalao (khud backup lekar badal dega):');
+        foreach ($legacyCandidates as $candidate) {
+            dr_line('       raxiwin-login-doctor.php?key=' . $DOCTOR_KEY . '&setdb=' . $candidate['db']);
+        }
+    } else {
+        dr_line('  Is cPanel account ki kisi bhi database me legacy tables nahi mile.');
+        dr_line('  -> Aapko legacy BDG database import karna padega (jis site se ye script aaya hai');
+        dr_line('     us DB ka .sql dump). Ye ek data/import problem hai, code se fix nahi hoti.');
+        dr_line('  Agar aap chahte ho ki naya (khali) setup hi chale, to bhi legacy schema chahiye —');
+        dr_line('  mujhe batao, main uske liye schema ka raasta de dunga.');
+    }
+} elseif (!isset($userColumns['mobile']) || (!isset($userColumns['password']) && !isset($userColumns['pwd']))) {
+    dr_line('VERDICT B: shonu_subjects exists but mobile/password columns are missing - the table is not the expected legacy table.');
+} elseif (isset($userColumns['akshinak']) && preg_match('/\((\d+)\)/', $userColumns['akshinak'], $m) && (int)$m[1] < 512) {
+    dr_line('VERDICT C: akshinak is ' . $userColumns['akshinak'] . ' - a modern JWT does not fit, login answers HTTP 503.');
+    dr_line('  Run this page with &fix=1 (or upload the new Login.php, it widens the column itself).');
 } else {
-    dr_line('VERDICT 5: the user table looks usable for login. If login still fails,');
-    dr_line('   look at the [Login] ref=... line in the error log above and send it to me.');
+    dr_line('VERDICT D: shonu_subjects looks usable in ' . $inspectDb . ' (users=' . dr_single($conn, 'SELECT COUNT(*) FROM `shonu_subjects`') . ').');
+    dr_line('  Login ab kaam karna chahiye. Problem rahe to error log ki [Login] ref=... line bhejo.');
 }
 dr_line();
 dr_line('end of report  |  delete raxiwin-login-doctor.php after use');

@@ -1,129 +1,124 @@
 ================================================================================
-  RaxiWin — LOGIN 503 ("Service not available!") FIX + DIAGNOSTIC
+  RaxiWin — LOGIN 503 ("Service not available!") FIX + DOCTOR v2
 ================================================================================
 Base: avinashraz19818/raxiwin  commit 35718c3
-Ye ZIP sirf LOGIN ka problem solve karta hai. (Instant-result wala ZIP alag hai.)
 DB schema change: koi nahi (login ka naya code apne aap safe ALTER chalata hai)
 
 --------------------------------------------------------------------------------
-1) PROBLEM KYA THI (technical, short)
+0) AAPKE SERVER KA REPORT — MATLAB KYA NIKLA
 --------------------------------------------------------------------------------
-Aapki screenshot / DevTools me:
-    POST /developer-maruf/api/webapi/Login   ->  HTTP 503 Service Unavailable
-    App ne modal dikhaya: "Service not available!"
+Doctor ke report se saaf hai:
 
-App me status-code ka fixed message hota hai:
-    500 -> "Server error!"      502 -> "Gateway error!"
-    503 -> "Service not available!"    504 -> "Gateway time out!"
-Matlab jo bhi asli error tha, wo chhup gaya — app sirf "503" dekhta hai.
+    php 7.4.33, MariaDB 10.11, connection OK
+    database                 : club532583_rax1win
+    tables in this database  : 31
+    non-app tables           : 0        (sirf wahi tabel jo app khud banata hai)
+    shonu_subjects           : MISSING
+    shonu_kaichila           : MISSING
+    thevani                  : MISSING
+    saas_lottery_bets        : MISSING
+    saas_lottery_results     : MISSING
 
-503 ka source = developer-maruf/api/webapi/Login.php ka last catch block:
+31 kyun? Kyunki app_core.php ka "app_install_schema()" har request par ~31 tabel
+banata/kayam rakhta hai (app_settings, app_notifications, vip ...). Matlab ye
+database **bilkul naya/khali** hai — ismein ek bhi legacy tabel nahi hai:
+koi user nahi (shonu_subjects), koi wallet nahi (shonu_kaichila), koi lottery
+bet/result nahi (saas_lottery_*), koi admin table nahi (nirvahaka_shonu).
 
-    } catch (Throwable $error) {
-        error_log('[Login] ' . $error->getMessage());
-        app_api_send(null, 8, 'Login service is unavailable', 503, 8);   <-- 503 yahan se
-    }
+Login 503 kyun deta hai: Login.php purane code me seedha
+    SELECT id,mobile,password,... FROM shonu_subjects WHERE mobile=?
+karta hai. Table hi nahi hai -> prepare fail -> RuntimeException -> catch -> HTTP 503
+-> app "Service not available!" modal dikhata hai (app 503 ka fixed message hai).
 
-Aapki site par GET request sahi JSON deti hai (maine live check kiya), matlab PHP,
-database connection, app_settings — sab chal raha hai. Isliye error us try ke
-andar wale DATABASE step me aa raha hai — yaani shonu_subjects (user table) wale
-queries. PHP 8.1+ par mysqli har SQL error par exception throw karta hai, isliye
-ek chhoti si schema problem bhi seedha 503 ban jati hai.
-
-Sabse common wajah: legacy user table ke kuch column database me missing hain,
-ya token column (akshinak) chhota hai aur usme naya JWT fit nahi hota
-("Data too long for column 'akshinak'").
-
---------------------------------------------------------------------------------
-2) SABSE PEHLE: DIAGNOSTIC CHALAO (1 minute)
---------------------------------------------------------------------------------
-1. Is ZIP ko public_html me upload karke Extract karo (paths root ke hisaab se hain).
-2. Browser me kholo:
-      https://rax1win.club9.eu.cc/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
-   (key galat/khali hui to page khulega hi nahi — ye security ke liye hai.)
-3. Jo page aaye use padho. Sabse neeche "VERDICT" likha hoga, jaise:
-      VERDICT 4: akshinak is varchar(255) - a modern JWT does not fit ...
-   Ya wahi poora page copy karke mujhe bhej do.
-4. Doctor ke URL ke aage &fix=1 laga do (optional) — wo khud safe repair kar dega:
-      .../raxiwin-login-doctor.php?key=b7f3c1a94e2d5068&fix=1
-   Ye sirf ADD karta hai (naya column) aur akshinak ko chauda karta hai.
-   Kuch delete/overwrite nahi karta.
-5. Doctor page DELETE mat bhulo, kaam ke baad.
-
-Doctor batata hai (kuch chhupta nahi): config/database.php mila ya nahi, DB
-connect hua ya nahi, kaun-kaun si tables hain / nahi hain, shonu_subjects ke saare
-columns, purane Login ka SELECT / session UPDATE chalega ya nahi (aur exact SQL
-error), JWT ki length vs akshinak column, password ka format (md5 / bcrypt /
-purana), register INSERT ka dry-run (transaction me, rollback ho jata hai — koi
-user create nahi hota), aur aakhri [Login] / [database] error log lines.
-
-Agar doctor kahe "table shonu_subjects is MISSING" -> aapke database me purani
-BDG legacy table hi nahi hai. Tab login/register code se theek nahi ho sakta,
-us DB me legacy import karna padega — wo mujhe bata do, main raasta batata hoon.
+IMPORTANT: ye code ki galti nahi hai. Code theek hai, bas is database me data hi nahi hai.
+Isi liye ab main aapko wahi doctor v2 bhej raha hoon, jo **is cPanel account ki saari
+databases scan karke** batata hai ki aapka asli (legacy) database kahan hai.
 
 --------------------------------------------------------------------------------
-3) TEESRA STEP: NAYA Login.php UPLOAD KARO
+1) DOCTOR v2 CHALAO (1 minute) — ye asli DB dhoondh dega
+--------------------------------------------------------------------------------
+Upload (agar pehle se hai to overwrite kar do) aur kholo:
+
+    https://rax1win.club9.eu.cc/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
+
+v2 me naya kya:
+  * "ALL DATABASES OF THIS CPANEL ACCOUNT" section: har database ke saamne
+    users / wallets / bets ka count — jisme legacy data hai wahan
+    "LEGACY DATA (users=N)" likha aayega.
+  * "NON-APP TABLES": batata hai ki current DB me app ke tabel ke alawa kuch hai bhi ya nahi.
+  * Kisi doosri DB ko detail me dekhna ho to:  &db=<database-name>
+      jaise: raxiwin-login-doctor.php?key=...&db=club532583_theprovider
+  * Agar legacy DB mil gaya, to ek URL se config switch bhi kar sakte ho:
+        raxiwin-login-doctor.php?key=...&setdb=<database-name>
+    Ye pehle verify karta hai (shonu_subjects + users>=1), phir
+    config/database.php ka BACKUP (config/database.php.bak-<time>) banakar
+    database name badal deta hai. Galat/khali DB par ye REFUSE kar deta hai.
+
+Report padho (ya mujhe bhejo). Do possibilities:
+
+  CASE A — "LEGACY DATA IS IN: club532583_xxxxx (users=N)" dikhta hai
+           => Aapka asli data usi cPanel me hai, sirf galti se site is khali DB
+              (rax1win) se judi hui hai. Fix = 1 line:
+                 &setdb=club532583_xxxxx   (ya File Manager me manually naam badal do)
+              Uske baad login/register/bets sab chalne lagenge.
+              Dhyan rahe: pehle &db=club532583_xxxxx chala kar dekh lo ki us DB me
+              shonu_subjects aur baaki legacy tabel theek hain.
+
+  CASE B — kisi bhi DB me legacy tables nahi mile ("Is cPanel account ki kisi bhi
+           database me legacy tables nahi mile")
+           => Aapko purani site (jisse ye script liya) ka database dump import
+              karna padega (users, wallets, results — sab). Ye data/import ka
+              kaam hai, code se login theek nahi ho sakta. Dump aap upload kar do,
+              main import ka raasta bata dunga (phpMyAdmin se 2 minute ka kaam hai).
+
+--------------------------------------------------------------------------------
+2) LOGIN.PHP (naya) — 503 ki jagah saaf message + schema ke prati tolerant
 --------------------------------------------------------------------------------
     public_html/developer-maruf/api/webapi/Login.php
-
-Purani file ka backup pehle rakh lo (rename to Login.php.bak). Ye naya file
-purane jaisa hi request/response deta hai (token, refreshToken, expiresIn,
-passwordErrorNum — sab same), par:
-
-  * shonu_subjects ke asli columns pehle padhta hai, sirf jo column exist karta
-    hai usi ko use karta hai -> ek chhota schema gap login ko nahi todta.
+Purani file ka backup rakh lo (Login.php.bak). Naye file ka request/response
+bilkul same hai, par:
+  * shonu_subjects ke asli columns padhke chalta hai -> table ke chhote schema
+    gap se login nahi tootta.
   * missing legacy columns (email, ishonup, codechorkamukala, shonupwderr,
-    shonullgnt, akshinak, tnegaresunohs, pwd) ek baar ADD kar deta hai, aur
-    akshinak chhota ho to VARCHAR(512) kar deta hai (10 min me ek baar, max).
-  * session save karne ke 3 plan try karta hai (full -> chhota token -> minimum),
-    aur jo column type fit nahi karta (jaise ishonup khud int ho) use skip karta hai.
-  * password: md5, bcrypt aur ab sha1 / sha256 / crypt / plain purane dumps bhi
-    accept karta hai, aur sahi login par bcrypt me upgrade kar deta hai.
-  * koi bhi unexpected DB problem aaye to HTTP 200 + code 1 + saaf message deta
-    hai (503 nahi!), aur technical detail error_log me likhta hai:
-        error_log('[Login] ref=XXXXXXXX ...')
-    Ref id message me bhi aata hai, isliye app "Service not available!" ki jagah
-    asli baat dikhata hai, aur doctor us ref ki poori detail dikha deta hai.
-
-Note: ye file Purani implementation ka behaviour preserve karti hai — user not
-exists (msgCode 101), wrong password (117) + attempt counter, suspended account
-(116), login_enabled off (12) — sab waise hi.
+    shonullgnt, akshinak, tnegaresunohs, pwd) ek baar khud ADD kar deta hai aur
+    akshinak chhota ho to VARCHAR(512) kar deta hai (10 min me max ek baar).
+  * session save ke 3 plan (full -> chhota token -> minimum), column type fit na
+    ho (jaise ishonup khud int ho) to us column ko skip karta hai.
+  * password: md5, bcrypt + sha1 / sha256 / crypt / plain purane dumps bhi; sahi
+    login par bcrypt me upgrade.
+  * ab kabhi chupchaap 503 nahi: HTTP 200 + code 1 + saaf message + ref id, aur
+    technical detail error_log me:  error_log('[Login] ref=XXXXXXXX ...')
+    Aapke DB jaisi situation me message aayega:
+      "Login is not available: the user table (shonu_subjects) is missing in this
+       database (ref XXXXXXXX)"  -> matlab saaf pata chal jayega ki problem DB me hai.
 
 --------------------------------------------------------------------------------
-4) TEST / VERIFY (maine kya check kiya)
+3) VERIFY (maine kya chalaya)
 --------------------------------------------------------------------------------
-PHP 8.3 runtime par naye Login.php ko asli scenarios me chalaya: 41/41 checks pass.
-  - normal login (bcrypt) -> token + refreshToken, session DB me save
-  - purana md5 password -> login ho gaya + bcrypt me upgrade
-  - sirf 4 column wali thin table -> 8 missing column add + login successful
-  - akshinak varchar(255) -> widen + login (data-too-long nahi aata)
-  - SELECT fail -> HTTP 200 + ref message (503 NAHI) + error log
-  - user nahi mila / galat password / suspended / login disabled -> same purane codes
-  - sha1 / plain password -> bhi login
-  - ishonup/shonullgnt int type wali table -> login phir bhi chalta hai
-  - doctor script: galat key -> 403, DB na mile -> saaf VERDICT, fatal nahi
-Syntax check: dono files OK (PHP 8.3).
+Aapke host ka PHP 7.4 hai, isliye dono cheezein PHP 7.4 aur PHP 8.3 dono par
+run karke check ki:
+  * Syntax (token parse): Login.php + doctor + harness -> PASS (7.4 aur 8.3)
+  * Login.php ke 41 behaviour checks -> 41/41 PASS (7.4 aur 8.3):
+      normal bcrypt login, purana md5 login + bcrypt upgrade, thin table
+      (8 column add + login OK), akshinak varchar(255) -> widen + login,
+      SELECT fail -> HTTP 200 + ref (503 NAHI), user not exists / wrong
+      password / suspended / login disabled -> wahi purane codes,
+      sha1 + plain password login, ishonup/shonullgnt int type wali table.
+  * Doctor: galat key -> 403, DB na mile -> saaf VERDICT (fatal nahi).
 
-Live site par jo maine check kiya (bina aapke server ke andar jaaye):
-  GET /developer-maruf/api/webapi/Login -> {"code":11,"msg":"Method not allowed"} (200)
-  GET /draw-live-v4/WinGo/WinGo_1M.json -> current period = asli abhi ka period
-    (matlab instant-result wala patch abhi site par live nahi hai — wo ZIP alag se
-    upload karna hoga.)
+--------------------------------------------------------------------------------
+4) FILES IN THIS ZIP (3)
+--------------------------------------------------------------------------------
+  developer-maruf/api/webapi/Login.php   (hardened login, drop-in replacement)
+  raxiwin-login-doctor.php               (doctor v2: DB scan + optional setdb/fix)
+  READ-ME-FIRST.txt                      (yahi file)
+
+Doctor URL:  https://<aapka-domain>/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
 
 --------------------------------------------------------------------------------
 5) ROLLBACK
 --------------------------------------------------------------------------------
-Login.php.bak ko wapas Login.php kar do, aur doctor file delete kar do.
-Koi DB change delete nahi hota (naye column ADD hue ho to rehne do — unse kisi
-cheez ka nuksaan nahi, wo legacy schema ka hissa hain).
-
---------------------------------------------------------------------------------
-6) FILES IN THIS ZIP (3)
---------------------------------------------------------------------------------
-  developer-maruf/api/webapi/Login.php   (hardened login, drop-in replacement)
-  raxiwin-login-doctor.php               (diagnostic + optional safe repair)
-  READ-ME-FIRST.txt                      (yahi file)
-
-Doctor URL (key ke saath):
-  https://<aapka-domain>/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
+Login.php.bak -> Login.php, doctor file delete. DB switch kiye the to
+config/database.php.bak-<time> ko wapas config/database.php kar do.
+Naye ADD hue columns rehne do (legacy schema ka hissa hain, nuksaan nahi).
 ================================================================================

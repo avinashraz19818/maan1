@@ -2,7 +2,7 @@ import { PHP } from '@php-wasm/universal';
 import { loadNodeRuntime } from '@php-wasm/node';
 import { readFileSync } from 'node:fs';
 
-const ROOT = process.env.SITEDIR || '/home/user/maan1/raxiwin-instant-fix/site_v3';
+const ROOT = process.env.SITEDIR || '/home/user/maan1/raxiwin-instant-fix/site_v4';
 const FILES = {
   '/site/draw-live-v4/index.php': `${ROOT}/draw-live-v4/index.php`,
   '/site/saas_lottery/bootstrap_live_v4.php': `${ROOT}/saas_lottery/bootstrap_live_v4.php`,
@@ -35,7 +35,7 @@ for (const target of Object.keys(FILES)) {
 }
 
 /* 2) behaviour tests */
-const test = readFileSync('/home/user/maan1/raxiwin-instant-fix/_tests/test_v3.php', 'utf8');
+const test = readFileSync('/home/user/maan1/raxiwin-instant-fix/_tests/test_v4.php', 'utf8');
 await php.writeFile('/site/test.php', test);
 const run = await php.run({ code: `<?php require '/site/test.php';` });
 console.log(run.text.replace(/\s+$/, ''));

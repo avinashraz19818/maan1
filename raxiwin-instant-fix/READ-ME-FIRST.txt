@@ -1,61 +1,59 @@
 ================================================================================
-  RaxiWin — V3: "GAME KO 1 PERIOD PICHE" (period + result dono)
+  RaxiWin — V4: GAME + RESULT dono ek period piche (final)
 ================================================================================
 Base: avinashraz19818/raxiwin  commit 35718c3
-Ye ZIP pichhle dono ZIPs ko supersede karta hai. Seedha ye upload karo.
-DB schema change: koi nahi. Frontend/config change: koi nahi.
+Ye ZIP pichhle teeno ZIPs ko supersede karta hai. Seedha ye upload karo.
+DB schema change: koi nahi.  Frontend / config change: koi nahi.
 
 --------------------------------------------------------------------------------
-1) AB KYA HOTA HAI (aapne jo bola wahi)
+1) ASLI MECHANISM JO PAKDA GAYA (isi wajah se pichhli baar gadbad hui)
 --------------------------------------------------------------------------------
-"game ko result aur period sab kuch 1 period piche"
+App ke JS me (assets/js/useLottery.hook): 
+      e.issue = String(BigInt(issueData.current.issueNumber) - 1n)
+      e.countdown = ... issueData.current.endTime ...
+Matlab: app draw ke "current" se KHUD 1 ghata kar apna period banata hai, aur
+countdown draw ke current.endTime se chalata hai.
 
-   * Screen par jo period "current" dikhta hai = provider ke current se EK PERIOD
-     PICHE (draw API ke teeno labels: previous/current/next).
-   * Us period ka result already decided/settled hota hai, isliye:
-         bet lagayi -> usi period ka result turant (win/loss + naya balance bet
-         response me hi), aur agar response miss ho gaya to pehla
-         GetWinLossResult poll bhi settle kar deta hai.
-   * History bhi wahi ek-period-piche wala view dikhati hai: har row apne hi
-     period ka result, aur jo period abhi bet ke liye khula hai wo list se hata
-     di jati hai.
-   * Timer/countdown bilkul normal — sirf period label piche hai,
-     startTime/endTime ko chhua nahi gaya.
-   * Settlement hamesha usi issue number par hoti hai jo client bhejta hai
-     (canonical), isliye admin records/history kabhi drift nahi karte.
+Iska matlab:
+  * Draw ka "current" 1104 -> app ka period 1103  (app ka apna 1 piche)
+  * Agar draw ka label hi ek period piche kar diya (mera pichhla ZIP) to
+    app ka period 1102 ho jata hai — period piche ho gaya ✓ (aapne yahi dekha)
+  * Lekin history/result tab bhi 1103 tak hi piche tha -> result game ke period
+    se ek period AAGE dikh raha tha ✗ (aapki ab wali complaint)
 
-Chhota example (aapki live site ka 30S data, 2026-10-15 08:52 UTC):
-     provider ka current label         : 20261015100051104
-     game me dikhne wala current       : 20261015100051103   <- 1 piche
-     history top row                   : 20261015100051103 -> 4
-     bet lagayi (…103) ka instant result: number 4  (= wahi jo history me top row
-                                          par dikh raha hai)
-     history second row                : 20261015100051102 -> 5  (apna result)
-     history third row                 : 20261015100051101 -> 6
-
-Yaani period aur uske saamne wala result — dono ek hi period ke, aur poora game
-(period + result) ek period piche. Yehi maanwin wala "1 period piche" behaviour
-hai.
+Isliye v4 me: period ka shift (v3) + result/history ka ceiling (1102) + bet ka
+bettable issue (1102) — teeno ek doosre se exactly match karte hain.
 
 --------------------------------------------------------------------------------
-2) PICHHLE VERSIONS ME KYA GALAT THA (transparency)
+2) AB SCREEN PAR KYA DIKHEGA (aapki live site ka 30S data, 2026-10-15)
 --------------------------------------------------------------------------------
- * Original site: history ke labels -1 kar diye jate the par number wahi rehta
-   tha -> "result ek period aage" (aapki pehli complaint).
- * v2 ZIP (mera): maine history me har row ka apna result kar diya, par GAME
-   (current period) shift nahi kiya -> labels ek aage chale gaye
-   (aapki doosri complaint: "sab kuch aage kar diya").
- * v3 (ye ZIP): dono cheezein sahi — game ka period label ek piche, aur uske
-   saath wala result bhi usi period ka.
+Provider (asli feed)      : previous 1103, current 1104, next 1105
+Game (screen) ka period   : 1102          <- period ek period piche ✓
+Countdown                 : normal (1104 ke window ka end time, kuch nahi badla)
+History (top row)         : 1102 -> 5     <- usi period ka apna result ✓
+History (next rows)       : 1101 -> 6, 1100 -> 9, 1099 -> 4, 1098 -> 5, ...
+Bet lagayi (1102)         : usi waqt result = 5 (wahi jo top row par hai), naya
+                            balance bhi usi response me
+Bet-able period se aage ki koi row history me nahi aati (1103/1104 chhup jate
+hain) — isliye "result aage" wala effect poora khatam.
 
-Ek technical baat jo test me pakdi gayi: provider ke draw API ke labels aur
-results (DB) ke labels me ek period ka offset hota hai (draw ka "current" label
-wahi hota hai jo DB me pichhle closed period ka label hota hai). Isliye label
-shift ab label ke apne window se hota hai (times se nahi) — provider ke offset ka
-koi asar nahi padta.
+Yaani: game ka period, history ka top row aur bet ka result — teeno ek hi period
+ke. Poora game (period + result) ek period piche.
 
 --------------------------------------------------------------------------------
-3) UPLOAD (cPanel)
+3) VERSIONS KA SAFAR (transparency)
+--------------------------------------------------------------------------------
+ original site : history me label -1 par number next period ka -> result aage
+ v1 (mera)     : draw ke labels times se bana raha tha -> labels ek period AAGE
+                 chale gaye (aapne "sab aage" dekha, sahi pakda)
+ v2 (mera)     : history me har row ka apna result (sahi) par draw shift nahi
+ v3 (mera)     : draw ka label ek piche -> period piche ho gaya ✓, par history/
+                 result 1103 tak -> result ek period aage ✗
+ v4 (ye ZIP)   : period piche + history/result ceiling bhi piche + bet gate
+                 bhi usi period par -> sab consistent ✓
+
+--------------------------------------------------------------------------------
+4) UPLOAD (cPanel)
 --------------------------------------------------------------------------------
 1. Pehle in 6 files ka backup (rename .bak ya download).
 2. ZIP ko public_html me upload karke Extract (paths root ke hisaab se hain):
@@ -68,57 +66,50 @@ koi asar nahi padta.
 3. ZIP + READ-ME-FIRST.txt delete kar do. Koi build/cache clear nahi chahiye.
 
 --------------------------------------------------------------------------------
-4) TEST
+5) TEST (login ki zaroorat nahi)
 --------------------------------------------------------------------------------
-1. WinGo 30S / 1M / 3M / 5M kholo -> countdown normal chalega.
-2. Game ka current period ek piche hoga, aur history ka top row bhi wahi period
-   (same number) dikhayega.
-3. History: har period ke saamne uska hi result.
+1. WinGo 30S / 1M / 3M / 5M kholo -> game ka period pichhle period se ek piche.
+2. History table: TOP ROW ka period = game ka period, aur uska number usi period
+   ka. Doosri row uska pichhla, aur so on.
+3. Countdown normal — timer kisi bhi waqt negative/ulta nahi hoga.
 4. Login theek hone ke baad bet lagao -> bet lagate hi win/loss + balance.
 
-NOTE: login abhi tak theek nahi hai kyunki aapke database
-(club532583_rax1win) me purani legacy tables (shonu_subjects, shonu_kaichila,
-saas_lottery_*) hi nahi hain — uske liye alag ZIP hai
-(raxiwin-login-503-fix.zip). Jab tak login nahi chalta, bet ka live test nahi ho
-sakta, lekin period/result alignment abhi test ho jayega (usme login nahi chahiye).
+NOTE: login abhi tak theek nahi hai (database club532583_rax1win me purani
+legacy tables hi nahi hain). Uske liye alag ZIP: raxiwin-login-503-fix.zip.
 
 --------------------------------------------------------------------------------
-5) VERIFY (maine kya chalaya)
+6) VERIFY (maine kya chalaya)
 --------------------------------------------------------------------------------
-PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par: 48/48 checks PASS.
-
-  * Syntax: 6/6 files OK (dono versions par).
-  * Game shift (asli label arithmetic, live fixture 2026-10-15):
-      - 30S: current 1104 -> 1103, previous 1103 -> 1102, next 1105 -> 1104
-      - 1M / 3M / 5M: har game me exactly ek period piche
-      - day boundary: 1M ka pehla period (00:00) -> pichle din ka last period
-        (20261014100011440)
-      - times (startTime/endTime) untouched -> countdown safe
-      - TrxWinGo/K3 par koi asar nahi
-      - toggle instant_result_enabled = 0 -> shift + instant dono off (purana
-        behaviour)
-  * History (asli data par):
-      - khula period list se hat jata hai, top row = game ka current period
-      - har row apne hi period ka result (1103 -> 4, 1102 -> 5, 1101 -> 6)
-      - pursana off-by-one gaya (pehle 1102 -> 4 aata tha)
-      - paging continuous (page 1 aur page 2 me duplicate/missing row nahi)
-  * Bet flow: display period ka bet accept hota hai, bet save hone ke turant baad
-    settle (sl_settle_issue) hota hai, response me instantResult/number/isWin/
-    winAmount/balance, aur GetWinLossResult poll par bhi settle hook mojood.
+PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par 64/64 checks PASS:
+  * Syntax: 6/6 files OK (dono versions)
+  * Game shift: 30S 1104->1103 (previous 1103->1102, next 1105->1104),
+    1M/3M/5M me bhi exactly ek period piche, din ki boundary bhi sahi,
+    startTime/endTime untouched (countdown safe)
+  * App chain (asli numbers par, JS ka -1 bhi shamil):
+      served draw current = 1103
+      app ka period       = 1102
+      history ceiling     = 1102
+      bettable issue      = 1102   -> chaaron match ✓
+  * History: 12 rows fetch -> page 1 par do row (1104, 1103) hat kar 10 rows,
+    top row = app ka period, har row apna result (1102->5, 1101->6, 1100->9)
+  * Bet: displayed period ka bet accept, save hote hi settle, response me
+    instantResult / number / isWin / winAmount / balance
+  * K3 / TrxWinGo par zero asar; toggle instant_result_enabled = 0 -> sab off
+    (purana behaviour wapas)
 
 --------------------------------------------------------------------------------
-6) ROLLBACK
+7) ROLLBACK
 --------------------------------------------------------------------------------
 Backup ki hui 6 files wapas upload kar do, ya admin setting
-instant_result_enabled = 0 kar do (purana behaviour wapas).
+instant_result_enabled = 0 kar do.
 
 --------------------------------------------------------------------------------
-7) FILES IN THIS ZIP (7)
+8) FILES IN THIS ZIP (7)
 --------------------------------------------------------------------------------
-   saas_lottery/bootstrap.php            (+201 / -2)
-   saas_lottery/bootstrap_live_v3.php    (+201 / -2)
-   saas_lottery/bootstrap_live_v4.php    (+201 / -2)
-   draw-live-v4/index.php                (history = apne period ka result)
+   saas_lottery/bootstrap.php            (+214 / -2)
+   saas_lottery/bootstrap_live_v3.php    (+214 / -2)
+   saas_lottery/bootstrap_live_v4.php    (+214 / -2)
+   draw-live-v4/index.php                (history/result ceiling bhi ek piche)
    draw-live-v3/index.php                (draw label ek period piche)
    draw/index.php                        (draw label ek period piche)
    READ-ME-FIRST.txt                     (yahi file)

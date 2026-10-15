@@ -1,0 +1,129 @@
+================================================================================
+  RaxiWin — LOGIN 503 ("Service not available!") FIX + DIAGNOSTIC
+================================================================================
+Base: avinashraz19818/raxiwin  commit 35718c3
+Ye ZIP sirf LOGIN ka problem solve karta hai. (Instant-result wala ZIP alag hai.)
+DB schema change: koi nahi (login ka naya code apne aap safe ALTER chalata hai)
+
+--------------------------------------------------------------------------------
+1) PROBLEM KYA THI (technical, short)
+--------------------------------------------------------------------------------
+Aapki screenshot / DevTools me:
+    POST /developer-maruf/api/webapi/Login   ->  HTTP 503 Service Unavailable
+    App ne modal dikhaya: "Service not available!"
+
+App me status-code ka fixed message hota hai:
+    500 -> "Server error!"      502 -> "Gateway error!"
+    503 -> "Service not available!"    504 -> "Gateway time out!"
+Matlab jo bhi asli error tha, wo chhup gaya — app sirf "503" dekhta hai.
+
+503 ka source = developer-maruf/api/webapi/Login.php ka last catch block:
+
+    } catch (Throwable $error) {
+        error_log('[Login] ' . $error->getMessage());
+        app_api_send(null, 8, 'Login service is unavailable', 503, 8);   <-- 503 yahan se
+    }
+
+Aapki site par GET request sahi JSON deti hai (maine live check kiya), matlab PHP,
+database connection, app_settings — sab chal raha hai. Isliye error us try ke
+andar wale DATABASE step me aa raha hai — yaani shonu_subjects (user table) wale
+queries. PHP 8.1+ par mysqli har SQL error par exception throw karta hai, isliye
+ek chhoti si schema problem bhi seedha 503 ban jati hai.
+
+Sabse common wajah: legacy user table ke kuch column database me missing hain,
+ya token column (akshinak) chhota hai aur usme naya JWT fit nahi hota
+("Data too long for column 'akshinak'").
+
+--------------------------------------------------------------------------------
+2) SABSE PEHLE: DIAGNOSTIC CHALAO (1 minute)
+--------------------------------------------------------------------------------
+1. Is ZIP ko public_html me upload karke Extract karo (paths root ke hisaab se hain).
+2. Browser me kholo:
+      https://rax1win.club9.eu.cc/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
+   (key galat/khali hui to page khulega hi nahi — ye security ke liye hai.)
+3. Jo page aaye use padho. Sabse neeche "VERDICT" likha hoga, jaise:
+      VERDICT 4: akshinak is varchar(255) - a modern JWT does not fit ...
+   Ya wahi poora page copy karke mujhe bhej do.
+4. Doctor ke URL ke aage &fix=1 laga do (optional) — wo khud safe repair kar dega:
+      .../raxiwin-login-doctor.php?key=b7f3c1a94e2d5068&fix=1
+   Ye sirf ADD karta hai (naya column) aur akshinak ko chauda karta hai.
+   Kuch delete/overwrite nahi karta.
+5. Doctor page DELETE mat bhulo, kaam ke baad.
+
+Doctor batata hai (kuch chhupta nahi): config/database.php mila ya nahi, DB
+connect hua ya nahi, kaun-kaun si tables hain / nahi hain, shonu_subjects ke saare
+columns, purane Login ka SELECT / session UPDATE chalega ya nahi (aur exact SQL
+error), JWT ki length vs akshinak column, password ka format (md5 / bcrypt /
+purana), register INSERT ka dry-run (transaction me, rollback ho jata hai — koi
+user create nahi hota), aur aakhri [Login] / [database] error log lines.
+
+Agar doctor kahe "table shonu_subjects is MISSING" -> aapke database me purani
+BDG legacy table hi nahi hai. Tab login/register code se theek nahi ho sakta,
+us DB me legacy import karna padega — wo mujhe bata do, main raasta batata hoon.
+
+--------------------------------------------------------------------------------
+3) TEESRA STEP: NAYA Login.php UPLOAD KARO
+--------------------------------------------------------------------------------
+    public_html/developer-maruf/api/webapi/Login.php
+
+Purani file ka backup pehle rakh lo (rename to Login.php.bak). Ye naya file
+purane jaisa hi request/response deta hai (token, refreshToken, expiresIn,
+passwordErrorNum — sab same), par:
+
+  * shonu_subjects ke asli columns pehle padhta hai, sirf jo column exist karta
+    hai usi ko use karta hai -> ek chhota schema gap login ko nahi todta.
+  * missing legacy columns (email, ishonup, codechorkamukala, shonupwderr,
+    shonullgnt, akshinak, tnegaresunohs, pwd) ek baar ADD kar deta hai, aur
+    akshinak chhota ho to VARCHAR(512) kar deta hai (10 min me ek baar, max).
+  * session save karne ke 3 plan try karta hai (full -> chhota token -> minimum),
+    aur jo column type fit nahi karta (jaise ishonup khud int ho) use skip karta hai.
+  * password: md5, bcrypt aur ab sha1 / sha256 / crypt / plain purane dumps bhi
+    accept karta hai, aur sahi login par bcrypt me upgrade kar deta hai.
+  * koi bhi unexpected DB problem aaye to HTTP 200 + code 1 + saaf message deta
+    hai (503 nahi!), aur technical detail error_log me likhta hai:
+        error_log('[Login] ref=XXXXXXXX ...')
+    Ref id message me bhi aata hai, isliye app "Service not available!" ki jagah
+    asli baat dikhata hai, aur doctor us ref ki poori detail dikha deta hai.
+
+Note: ye file Purani implementation ka behaviour preserve karti hai — user not
+exists (msgCode 101), wrong password (117) + attempt counter, suspended account
+(116), login_enabled off (12) — sab waise hi.
+
+--------------------------------------------------------------------------------
+4) TEST / VERIFY (maine kya check kiya)
+--------------------------------------------------------------------------------
+PHP 8.3 runtime par naye Login.php ko asli scenarios me chalaya: 41/41 checks pass.
+  - normal login (bcrypt) -> token + refreshToken, session DB me save
+  - purana md5 password -> login ho gaya + bcrypt me upgrade
+  - sirf 4 column wali thin table -> 8 missing column add + login successful
+  - akshinak varchar(255) -> widen + login (data-too-long nahi aata)
+  - SELECT fail -> HTTP 200 + ref message (503 NAHI) + error log
+  - user nahi mila / galat password / suspended / login disabled -> same purane codes
+  - sha1 / plain password -> bhi login
+  - ishonup/shonullgnt int type wali table -> login phir bhi chalta hai
+  - doctor script: galat key -> 403, DB na mile -> saaf VERDICT, fatal nahi
+Syntax check: dono files OK (PHP 8.3).
+
+Live site par jo maine check kiya (bina aapke server ke andar jaaye):
+  GET /developer-maruf/api/webapi/Login -> {"code":11,"msg":"Method not allowed"} (200)
+  GET /draw-live-v4/WinGo/WinGo_1M.json -> current period = asli abhi ka period
+    (matlab instant-result wala patch abhi site par live nahi hai — wo ZIP alag se
+    upload karna hoga.)
+
+--------------------------------------------------------------------------------
+5) ROLLBACK
+--------------------------------------------------------------------------------
+Login.php.bak ko wapas Login.php kar do, aur doctor file delete kar do.
+Koi DB change delete nahi hota (naye column ADD hue ho to rehne do — unse kisi
+cheez ka nuksaan nahi, wo legacy schema ka hissa hain).
+
+--------------------------------------------------------------------------------
+6) FILES IN THIS ZIP (3)
+--------------------------------------------------------------------------------
+  developer-maruf/api/webapi/Login.php   (hardened login, drop-in replacement)
+  raxiwin-login-doctor.php               (diagnostic + optional safe repair)
+  READ-ME-FIRST.txt                      (yahi file)
+
+Doctor URL (key ke saath):
+  https://<aapka-domain>/raxiwin-login-doctor.php?key=b7f3c1a94e2d5068
+================================================================================

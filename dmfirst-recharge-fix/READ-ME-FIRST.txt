@@ -1,0 +1,147 @@
+================================================================================
+  DMFirst — "RECHARGE REQUIRED" GATE OFF (bina recharge ke game khulega)
+================================================================================
+Site: dmfirst.club9.eu.cc   |   Repo: avinashraz19818/dmfirst (main)
+DB schema change: koi nahi.  Frontend / config change: koi nahi.
+(Ye raxiwin wale patch se ALAG hai — dmfirst ka gate alag file me hai.)
+
+--------------------------------------------------------------------------------
+1) POPUP KYUN AA RAHA THA
+--------------------------------------------------------------------------------
+App (assets/js/index-DHU_0nuy.js) game kholne se pehle
+`/devmaruf/api/webapi/GetAllowBetSetting` se poochta hai, aur uske jawab par
+faisla karta hai. Asli JS:
+
+    const { allowNoRechargeGame: se, userRechargeTimes: de,
+            lowestRechargeAmountToGame: ge, userRechargeAmount: _e,
+            canDirectToGame: D } = te.data;
+    if (se == "1" || D) return k(G);                              // game kholo
+    if (Number(ge) && Number(ge) > _e) -> "₹ge recharge karo" popup
+    if (Number(ge) === 0 && de === 0)  -> "Game requires recharge to enter" (code1003)
+
+Server (devmaruf/api/webapi/GetAllowBetSetting.php) purane values bhej raha tha:
+
+    canDirectToGame            = (bool) web_setting.allowbet     // 0/false
+    allowNoRechargeGame        = '0'                             // hardcoded
+    lowestRechargeAmountToGame = web_setting.min_recharge         // aksar 100
+    userRechargeTimes/Amount   = 0 / 0.0                          // hardcoded
+
+Matlab: jab tak `web_setting.allowbet = 1` na ho aur user ne ₹min_recharge
+(aksar 100) ka recharge na kar liya ho -> WinGo kholne par recharge popup.
+Yahi aapki complaint thi.
+
+Aur ek bug: jo user recharge kar chuka tha (thevani me row hai), usko is file ka
+`else` branch galti se GAME-CATEGORY LIST (typeNameCode/categoryImg wala junk)
+bhej deta tha — ye us endpoint ka kaam hi nahi hai.
+
+--------------------------------------------------------------------------------
+2) AB KYA BHEJ RAHA HAI (gate OFF)
+--------------------------------------------------------------------------------
+Ek hi saaf payload (dono branches ki jagah):
+
+    canDirectToGame            => true      // har user seedha game me
+    allowNoRechargeGame        => "1"       // app ka pehla check isi par pass
+    lowestRechargeAmountToGame => "0"
+    userRechargeTimes          => thevani se ASLI count (sthiti=1)
+    userRechargeAmount         => thevani se ASLI sum   (sthiti=1)
+
+App ka pehla check (`se == "1" || D`) har user ke liye pass, isliye dono popup
+kabhi nahi aate. Baki file waisi hi hai: signature check, JWT call, error
+responses (Wrong signature / Param is Invalid / Method not allowed 405) sab intact.
+Junk category branch hata diya gaya.
+
+Optional (ZIP me hai): `GetLoadedSetting.php` me `needPopupFirstRecharge`
+true -> false — login ke baad wala "first recharge" popup band. Us popup ko
+rakhna ho to sirf ye ek file upload na karo, baaki patch phir bhi chalega.
+
+--------------------------------------------------------------------------------
+3) PEHLE / BAAD
+--------------------------------------------------------------------------------
+   naya user (0 recharge, ₹0)   -> pehle: "Game requires recharge to enter"
+                                -> ab   : WinGo seedha khulta hai ✓
+   naya user (₹50 balance)      -> pehle: "₹100 recharge karo" popup
+                                -> ab   : khulta hai ✓
+   recharge kar chuka user      -> pehle: ulta-seedha category jawab milta tha
+                                -> ab   : sahi gate jawab + khulta hai ✓
+
+SCOPE: ye gate app me SAB games (WinGo, K3, 5D, TrxWinGo, MotoRace...) ke liye
+ek hi hai — isliye ek hi file se sab jagah game khulega.
+Betting side: WinGo/K3/5D ke bets `/Lottery/*` (SaaS lottery) se jate hain aur
+wahan koi recharge/min-recharge check nahi hai — isliye bet lagne me rukavat
+nahi aayegi. (Purani legacy `devmaruf/.../GameBetting.php` files me min_recharge
+ka check hai, par app unko use nahi karta — isliye ZIP me wo nahi hain.
+Zaroorat padi to bolo, wo bhi bana dunga.)
+
+--------------------------------------------------------------------------------
+4) UPLOAD (aaPanel file manager / FTP)
+--------------------------------------------------------------------------------
+1. Backup: purani file ka naam badal do (.bak):
+        devmaruf/api/webapi/GetAllowBetSetting.php
+        devmaruf/api/webapi/GetLoadedSetting.php   (agar upload kar rahe ho)
+2. ZIP ko site folder (/www/wwwroot/dmfirst.club9.eu.cc/) me upload karke
+   extract karo — paths root ke hisaab se hain:
+        devmaruf/api/webapi/GetAllowBetSetting.php   <-- ASLI FIX
+        devmaruf/api/webapi/GetLoadedSetting.php     <-- optional (popup)
+        dmfirst-recharge-check.php                    <-- sirf check ke liye
+3. Neeche wala check page kholo (VERDICT dekho), phir ZIP + README + check page
+   delete kar do. Koi build step nahi, koi cache clear nahi (PHP file turant
+   asar karti hai).
+
+--------------------------------------------------------------------------------
+5) VERIFY (30 second, login ki zaroorat nahi)
+--------------------------------------------------------------------------------
+Kholo:  https://dmfirst.club9.eu.cc/dmfirst-recharge-check.php?key=b7f3c1a94e2d5068
+
+Report batayegi:
+  * GetAllowBetSetting.php: hash, size, mtime + app ki asli values
+      ("gate: OFF ✓", "junk category branch: hata diya gaya ✓")
+  * GetLoadedSetting.php: valid JSON? popup ON/OFF?
+  * legacy betting files: unme min-recharge check hai ya nahi (jaankari)
+  * database: web_setting.allowbet / min_recharge (ab ignored), thevani me
+    approved recharges + total, users count
+  * HTTP self-probe: GetAllowBetSetting (POST-only) / Lottery/GetGameList /
+    WinGo 30S draw — sab live hain ya nahi
+  * VERDICT: gate OFF hai, aur test rows: "recharge ₹0 -> open, ₹50 -> open,
+    ₹500 -> open"
+
+App me test:
+  1. Jis user ko pehle popup aata tha, usse login karo -> WinGo seedha khulega.
+  2. Ek bet lagao (balance ho to) — bet/result normal chalega.
+  3. Agar phir bhi popup aaye: app/browser purani JS cache kar raha hai -> app
+     band karke dobara kholo, ya browser me "clear site data"/incognito test.
+
+--------------------------------------------------------------------------------
+6) VERIFY (maine kya chalaya)
+--------------------------------------------------------------------------------
+PHP 7.4 AUR PHP 8.3 — dono par 29/29 checks PASS + checker ke 9/9 smoke checks:
+  * Syntax: 3/3 files OK (dono versions)
+  * Payload parse: canDirectToGame true, allowNoRechargeGame "1",
+    lowestRechargeAmountToGame "0"
+  * App ke JS gate ka wahi faisla dobara chalaya:
+      naya user (0 recharge, ₹0) -> OPEN | naya user (₹50) -> OPEN
+      recharge kar chuka user -> OPEN | sirf allowNoRechargeGame "1" -> OPEN
+      purani values (min ₹100) -> "itna recharge karo" popup
+      purani values (min ₹0, 0 recharge) -> "Game requires recharge to enter"
+  * Junk branch (typeNameCode/categoryImg) gayab; gate ab web_setting par depend
+    nahi; recharge count/sum thevani se asli
+  * Intact: signature check, JWT call, Wrong signature / Param is Invalid /
+    Method not allowed (405) — sab response paths
+  * GetLoadedSetting: valid JSON, popup false, baaki keys (returnNewRechargeAwards,
+    activityRedDot, registerGiftAmount...) waise hi, plain JSON hi hai
+  * Checker: galat key -> "forbidden", sahi key par gate OFF + junk gayab +
+    app ka faisla (₹0/₹50/₹500 -> open) + verdict; koi PHP warning/notice nahi
+
+--------------------------------------------------------------------------------
+7) ROLLBACK
+--------------------------------------------------------------------------------
+Backup (.bak) file wapas rakh do — bas. Ya bolo, main aisa version bana dunga jo
+admin setting (web_setting.allowbet) se ON/OFF ho (default OFF).
+
+--------------------------------------------------------------------------------
+8) FILES IN THIS ZIP (4)
+--------------------------------------------------------------------------------
+   devmaruf/api/webapi/GetAllowBetSetting.php   (gate OFF + junk branch hataya)
+   devmaruf/api/webapi/GetLoadedSetting.php     (first-recharge popup OFF — optional)
+   dmfirst-recharge-check.php                    (diagnostic — baad me delete)
+   READ-ME-FIRST.txt                             (yahi file)
+================================================================================

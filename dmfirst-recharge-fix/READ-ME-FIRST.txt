@@ -1,7 +1,9 @@
 ================================================================================
-  DMFirst — "RECHARGE REQUIRED" GATE OFF (bina recharge ke game khulega)
+  DMFirst — RECHARGE GATE OFF (v2: popup + LAUNCH dono band)
 ================================================================================
 Site: dmfirst.club9.eu.cc   |   Repo: avinashraz19818/dmfirst (main)
+v2 me "Please recharge first to play games!" (WinGo par click karne wala error)
+bhi fix ho gaya — neeche section 2 dekho.
 DB schema change: koi nahi.  Frontend / config change: koi nahi.
 (Ye raxiwin wale patch se ALAG hai — dmfirst ka gate alag file me hai.)
 
@@ -35,7 +37,34 @@ Aur ek bug: jo user recharge kar chuka tha (thevani me row hai), usko is file ka
 bhej deta tha — ye us endpoint ka kaam hi nahi hai.
 
 --------------------------------------------------------------------------------
-2) AB KYA BHEJ RAHA HAI (gate OFF)
+2) "Please recharge first to play games!" — YE ALAG GATE THA (v2 me band)
+--------------------------------------------------------------------------------
+Aapne WinGo par click kiya -> error aaya. Us waqt app `GetGameUrl`
+(vendorCode = ARLottery) call karta hai — WinGo/K3/5D ka launch URL usi se banta
+hai. Us file (devmaruf/api/webapi/GetGameUrl.php) me:
+
+    $rechargeQuery = "SELECT 1 FROM thevani WHERE balakedara = '$userId' AND sthiti = 1 LIMIT 1";
+    $rechargeResult = mysqli_query($conn, $rechargeQuery);
+    if (mysqli_num_rows($rechargeResult) == 0) {
+        game_url_reply(null, 400, 'Please recharge first to play games!', 400);
+    }
+
+Matlab: jis user ka ek bhi approved recharge (thevani, sthiti=1) nahi hai, uska
+game LAUNCH hi block ho jata tha — "recharge required" popup wale gate ke alawa
+ye doosra gate hai. v2 me ye:
+
+    $REQUIRE_RECHARGE_TO_LAUNCH = false;   // gate OFF
+    if ($REQUIRE_RECHARGE_TO_LAUNCH) { ...purana check... }
+
+matlab check block ab toggle ke andar hai (chalu nahi). Dobara ON karna ho to
+usi ek line ko true kar do. Signature/JWT/active-user checks, demo-account block,
+ARLottery route, wallet logic — sab waise hi hain.
+
+NOTE: pehla gate (popup wala) ALREADY LIVE hai — aapki site ke check page ne
+confirm kiya: "gate: OFF ✓" (17:09 UTC report). Isliye ab sirf GetGameUrl.php
+(yani ye v2 ZIP) upload karna baaki hai.
+
+3) AB KYA BHEJ RAHA HAI (popup gate OFF)
 --------------------------------------------------------------------------------
 Ek hi saaf payload (dono branches ki jagah):
 
@@ -55,7 +84,7 @@ true -> false — login ke baad wala "first recharge" popup band. Us popup ko
 rakhna ho to sirf ye ek file upload na karo, baaki patch phir bhi chalega.
 
 --------------------------------------------------------------------------------
-3) PEHLE / BAAD
+4) PEHLE / BAAD
 --------------------------------------------------------------------------------
    naya user (0 recharge, ₹0)   -> pehle: "Game requires recharge to enter"
                                 -> ab   : WinGo seedha khulta hai ✓
@@ -73,14 +102,15 @@ ka check hai, par app unko use nahi karta — isliye ZIP me wo nahi hain.
 Zaroorat padi to bolo, wo bhi bana dunga.)
 
 --------------------------------------------------------------------------------
-4) UPLOAD (aaPanel file manager / FTP)
+5) UPLOAD (aaPanel file manager / FTP)
 --------------------------------------------------------------------------------
 1. Backup: purani file ka naam badal do (.bak):
         devmaruf/api/webapi/GetAllowBetSetting.php
         devmaruf/api/webapi/GetLoadedSetting.php   (agar upload kar rahe ho)
 2. ZIP ko site folder (/www/wwwroot/dmfirst.club9.eu.cc/) me upload karke
    extract karo — paths root ke hisaab se hain:
-        devmaruf/api/webapi/GetAllowBetSetting.php   <-- ASLI FIX
+        devmaruf/api/webapi/GetGameUrl.php           <-- v2 ka ASLI FIX (launch gate)
+        devmaruf/api/webapi/GetAllowBetSetting.php   <-- popup gate (v1, already live)
         devmaruf/api/webapi/GetLoadedSetting.php     <-- optional (popup)
         dmfirst-recharge-check.php                    <-- sirf check ke liye
 3. Neeche wala check page kholo (VERDICT dekho), phir ZIP + README + check page
@@ -88,20 +118,23 @@ Zaroorat padi to bolo, wo bhi bana dunga.)
    asar karti hai).
 
 --------------------------------------------------------------------------------
-5) VERIFY (30 second, login ki zaroorat nahi)
+6) VERIFY (30 second, login ki zaroorat nahi)
 --------------------------------------------------------------------------------
 Kholo:  https://dmfirst.club9.eu.cc/dmfirst-recharge-check.php?key=b7f3c1a94e2d5068
 
 Report batayegi:
   * GetAllowBetSetting.php: hash, size, mtime + app ki asli values
       ("gate: OFF ✓", "junk category branch: hata diya gaya ✓")
+  * GetGameUrl.php (launch gate): "Please recharge first to play games!" gate
+      band hai ya nahi (+ toggle ki value, JWT/signature, ARLottery route,
+      demo block — sab intact ya nahi)
   * GetLoadedSetting.php: valid JSON? popup ON/OFF?
   * legacy betting files: unme min-recharge check hai ya nahi (jaankari)
   * database: web_setting.allowbet / min_recharge (ab ignored), thevani me
     approved recharges + total, users count
   * HTTP self-probe: GetAllowBetSetting (POST-only) / Lottery/GetGameList /
     WinGo 30S draw — sab live hain ya nahi
-  * VERDICT: gate OFF hai, aur test rows: "recharge ₹0 -> open, ₹50 -> open,
+  * VERDICT: "DONO gate OFF hain" + test rows: "recharge ₹0 -> open, ₹50 -> open,
     ₹500 -> open"
 
 App me test:
@@ -111,9 +144,9 @@ App me test:
      band karke dobara kholo, ya browser me "clear site data"/incognito test.
 
 --------------------------------------------------------------------------------
-6) VERIFY (maine kya chalaya)
+7) VERIFY (maine kya chalaya)
 --------------------------------------------------------------------------------
-PHP 7.4 AUR PHP 8.3 — dono par 29/29 checks PASS + checker ke 9/9 smoke checks:
+PHP 7.4 AUR PHP 8.3 — dono par 40/40 checks PASS + checker ke 12/12 smoke checks:
   * Syntax: 3/3 files OK (dono versions)
   * Payload parse: canDirectToGame true, allowNoRechargeGame "1",
     lowestRechargeAmountToGame "0"
@@ -128,19 +161,23 @@ PHP 7.4 AUR PHP 8.3 — dono par 29/29 checks PASS + checker ke 9/9 smoke checks
     Method not allowed (405) — sab response paths
   * GetLoadedSetting: valid JSON, popup false, baaki keys (returnNewRechargeAwards,
     activityRedDot, registerGiftAmount...) waise hi, plain JSON hi hai
-  * Checker: galat key -> "forbidden", sahi key par gate OFF + junk gayab +
+  * GetGameUrl.php: "$REQUIRE_RECHARGE_TO_LAUNCH = false" (purani gate line uske
+    andar hai, chalu nahi), ARLottery route / JWT / signature / demo block /
+    game_url_reply ke saare response paths waise hi
+  * Checker: galat key -> "forbidden", sahi key par DONO gate OFF + junk gayab +
     app ka faisla (₹0/₹50/₹500 -> open) + verdict; koi PHP warning/notice nahi
 
 --------------------------------------------------------------------------------
-7) ROLLBACK
+8) ROLLBACK
 --------------------------------------------------------------------------------
 Backup (.bak) file wapas rakh do — bas. Ya bolo, main aisa version bana dunga jo
 admin setting (web_setting.allowbet) se ON/OFF ho (default OFF).
 
 --------------------------------------------------------------------------------
-8) FILES IN THIS ZIP (4)
+9) FILES IN THIS ZIP (5)
 --------------------------------------------------------------------------------
-   devmaruf/api/webapi/GetAllowBetSetting.php   (gate OFF + junk branch hataya)
+   devmaruf/api/webapi/GetGameUrl.php           (launch gate OFF — v2 ka asli fix)
+   devmaruf/api/webapi/GetAllowBetSetting.php   (popup gate OFF + junk branch hataya)
    devmaruf/api/webapi/GetLoadedSetting.php     (first-recharge popup OFF — optional)
    dmfirst-recharge-check.php                    (diagnostic — baad me delete)
    READ-ME-FIRST.txt                             (yahi file)

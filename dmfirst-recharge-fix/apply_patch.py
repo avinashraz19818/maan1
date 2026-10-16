@@ -38,6 +38,22 @@ App ka pehla check (`se == "1" || D`) har user ke liye pass ho jata hai, isliye
 koi recharge popup nahi aata. Baki poora file (signature check, JWT, error
 codes 5/7, 405) waisa hi rehta hai.
 
+v2 me ek AUR gate mila (yehi aapka "404 Please recharge first to play games!"
+tha)
+------------------------------------------------------------------------
+Jab aap WinGo par click karte ho, app `GetGameUrl` (vendorCode=ARLottery) call
+karta hai — SaaS lottery (WinGo/K3/5D) ka launch URL usi se banta hai. Us file
+me:
+
+    $rechargeQuery = "SELECT 1 FROM thevani WHERE balakedara = '$userId' AND sthiti = 1 LIMIT 1";
+    if (mysqli_num_rows($rechargeResult) == 0) {
+        game_url_reply(null, 400, 'Please recharge first to play games!', 400);
+    }
+
+Matlab: ek bhi approved recharge na ho to WinGo ka launch hi block — yahi message
+aapko dikh raha tha. Ab ye gate band hai (ek line se dobara ON bhi kar sakte ho:
+$REQUIRE_RECHARGE_TO_LAUNCH = true).
+
 Optional: GetLoadedSetting.php me `needPopupFirstRecharge` true -> false
 (login ke baad wala "first recharge" popup).
 
@@ -88,8 +104,33 @@ BLOCK_RE = re.compile(
     re.S,
 )
 
+GAMEURL_OLD = """$rechargeQuery = "SELECT 1 FROM thevani WHERE balakedara = '$userId' AND sthiti = 1 LIMIT 1";
+$rechargeResult = mysqli_query($conn, $rechargeQuery);
+if (mysqli_num_rows($rechargeResult) == 0) {
+    game_url_reply(null, 400, 'Please recharge first to play games!', 400);
+}"""
+
+GAMEURL_NEW = """// ---------------------------------------------------------------------------
+// Recharge gate OFF: WinGo/K3/5D (ARLottery) ka launch URL bina kisi recharge ke
+// ban jata hai. Gate dobara chahiye to neeche wali line true kar do.
+// ---------------------------------------------------------------------------
+$REQUIRE_RECHARGE_TO_LAUNCH = false;
+if ($REQUIRE_RECHARGE_TO_LAUNCH) {
+    $rechargeQuery = "SELECT 1 FROM thevani WHERE balakedara = '$userId' AND sthiti = 1 LIMIT 1";
+    $rechargeResult = mysqli_query($conn, $rechargeQuery);
+    if (mysqli_num_rows($rechargeResult) == 0) {
+        game_url_reply(null, 400, 'Please recharge first to play games!', 400);
+    }
+}"""
+
 LOADED_OLD = '"needPopupFirstRecharge": true'
 LOADED_NEW = '"needPopupFirstRecharge": false'
+
+
+def replace_once(text, old, new, label):
+    if text.count(old) != 1:
+        raise SystemExit(f'ABORT [{label}]: expected exactly 1 match, found {text.count(old)}')
+    return text.replace(old, new)
 
 
 def main():
@@ -132,6 +173,21 @@ def main():
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(out)
     print(f'patched {rel} (recharge gate OFF + junk branch hataya)')
+
+    rel3 = API + '/GetGameUrl.php'
+    text3 = (src / rel3).read_text()
+    if 'REQUIRE_RECHARGE_TO_LAUNCH' in text3:
+        raise SystemExit('ABORT: GetGameUrl already patched')
+    out3 = replace_once(text3, GAMEURL_OLD, GAMEURL_NEW, 'GetGameUrl launch gate')
+    for needle in ('function game_url_reply', "'ARLottery'", 'is_jwt_valid', 'Demo accounts cannot launch games'):
+        if needle not in out3:
+            raise SystemExit(f'ABORT: GetGameUrl me zaroori hissa gayab -> {needle}')
+    if out3.count('game_url_reply') != text3.count('game_url_reply'):
+        raise SystemExit('ABORT: GetGameUrl ke response paths badal gaye')
+    target3 = dst / rel3
+    target3.parent.mkdir(parents=True, exist_ok=True)
+    target3.write_text(out3)
+    print(f'patched {rel3} (launch par recharge gate OFF)')
 
     rel2 = API + '/GetLoadedSetting.php'
     text2 = (src / rel2).read_text()

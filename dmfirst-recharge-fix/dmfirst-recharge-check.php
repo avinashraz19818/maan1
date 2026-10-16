@@ -118,6 +118,31 @@ if ($loaded === null) {
         . '   needPopupFirstRecharge: ' . ($popup === null ? '(nahi mila)' : ($popup ? 'true (popup AAYEGA)' : 'false (popup band ✓)')));
 }
 
+/* ---- launch gate: GetGameUrl.php (WinGo/K3/5D ka launch URL) ---- */
+rc_head('launch gate (GetGameUrl.php)');
+$gameUrlRel = 'devmaruf/api/webapi/GetGameUrl.php';
+$gameUrl = rc_read($gameUrlRel);
+$launchGateOff = false;
+if ($gameUrl === null) {
+    rc_line('  ' . $gameUrlRel . '   MISSING — upload karo (WinGo launcher isi file se banta hai)');
+} else {
+    $hasGateString = strpos($gameUrl, 'Please recharge first to play games!') !== false;
+    $flagged = preg_match('/\$REQUIRE_RECHARGE_TO_LAUNCH\s*=\s*true/', $gameUrl) === 1;
+    $disabled = strpos($gameUrl, '$REQUIRE_RECHARGE_TO_LAUNCH') !== false && !$flagged;
+    $launchGateOff = !$hasGateString || $disabled;
+    rc_line('  ' . $gameUrlRel);
+    rc_line('    sha256 ' . substr(hash('sha256', $gameUrl), 0, 16) . '   ' . strlen($gameUrl) . ' bytes   mtime '
+        . date('Y-m-d H:i:s', (int) filemtime(__DIR__ . '/' . $gameUrlRel)));
+    rc_line('    "Please recharge first to play games!" gate: ' . ($hasGateString
+        ? ($disabled ? 'band ✓ (toggle ke andar, chalu nahi hai)' : 'ABHI BHI CHALU (purana build)')
+        : 'hata diya gaya ✓'));
+    rc_line('    toggle $REQUIRE_RECHARGE_TO_LAUNCH      : ' . ($disabled ? 'false (gate OFF)' : ($flagged ? 'true (gate ON)' : 'n/a')));
+    rc_line('    signature/JWT/active-user checks        : ' . ((strpos($gameUrl, 'is_jwt_valid') !== false && strpos($gameUrl, 'Wrong signature') !== false)
+        ? 'intact ✓' : 'MISSING! galat file hai'));
+    rc_line('    ARLottery (SaaS lottery) route          : ' . (strpos($gameUrl, "'ARLottery'") !== false ? 'intact ✓' : 'MISSING!'));
+    rc_line('    demo-account block                      : ' . (strpos($gameUrl, 'Demo accounts cannot launch games') !== false ? 'intact ✓' : 'hat gaya'));
+}
+
 /* legacy betting files (app inko use nahi karta, sirf jaankari) */
 rc_head('legacy betting files (jaankari)');
 foreach (array('GameBetting.php', 'K3GameBetting.php', 'Game5DBetting.php') as $name) {
@@ -221,12 +246,14 @@ foreach ($probes as $label => $path) {
 
 /* ------------------------------------------------------------ verdict */
 rc_head('verdict');
-if ($allow === null) {
-    rc_line('  File upload nahi hui. ZIP se is exact path par upload karo:');
-    rc_line('    devmaruf/api/webapi/GetAllowBetSetting.php');
-} elseif ($gateOff) {
-    rc_line('  Gate OFF hai — koi bhi user bina recharge ke game khol sakta hai,');
-    rc_line('  aur naya payload dene ke baad "recharge required" popup nahi aayega.');
+if ($allow === null || $gameUrl === null) {
+    rc_line('  Ye files upload nahi hui:');
+    if ($allow === null) { rc_line('    devmaruf/api/webapi/GetAllowBetSetting.php'); }
+    if ($gameUrl === null) { rc_line('    devmaruf/api/webapi/GetGameUrl.php'); }
+} elseif ($gateOff && $launchGateOff) {
+    rc_line('  DONO gate OFF hain — koi bhi user bina recharge ke game khol sakta hai:');
+    rc_line('    * popup gate (GetAllowBetSetting) OFF');
+    rc_line('    * launch gate (GetGameUrl) OFF -> WinGo ka URL ban jayega');
     if (is_array($values)) {
         foreach (array(0, 50, 500) as $amount) {
             rc_line('    test: user ka recharge ₹' . $amount . ' -> app ka faisla: '
@@ -236,8 +263,9 @@ if ($allow === null) {
     rc_line('  User ko ek baar app band karke dobara kholna hoga (purani JS cache),');
     rc_line('  ya browser me "clear site data" — warna purana screen dikh sakta hai.');
 } else {
-    rc_line('  PROBLEM: file purani hai (gate ON). Neeche wala file upload karo:');
-    rc_line('    devmaruf/api/webapi/GetAllowBetSetting.php');
+    rc_line('  PROBLEM: ek ya dono gate abhi bhi purane hain. Ye files upload karo:');
+    if (!$gateOff) { rc_line('    devmaruf/api/webapi/GetAllowBetSetting.php   (popup gate)'); }
+    if (!$launchGateOff) { rc_line('    devmaruf/api/webapi/GetGameUrl.php          (launch gate — yahi "recharge first" deta hai)'); }
 }
 rc_line();
 rc_line('end of report  |  delete dmfirst-recharge-check.php after use');

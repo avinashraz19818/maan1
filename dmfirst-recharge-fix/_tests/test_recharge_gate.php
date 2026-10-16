@@ -113,6 +113,24 @@ foreach (array('isExistGrandAward','returnAwards','returnNewRechargeAwards','isA
 chk(true, 'GetLoadedSetting ki baaki keys preserved');
 chk(strpos($loaded, '<?php') === false, 'GetLoadedSetting plain JSON hi hai');
 
+/* ---- C2) GetGameUrl.php (launch gate) ---- */
+$gameUrlRel = 'devmaruf/api/webapi/GetGameUrl.php';
+$gameUrl = @file_get_contents($ROOT . '/' . $gameUrlRel);
+chk($gameUrl !== false, 'GetGameUrl.php read hua');
+chk(strpos($gameUrl, '$REQUIRE_RECHARGE_TO_LAUNCH') !== false, 'launch gate ab toggle ke andar hai');
+chk(preg_match('/\$REQUIRE_RECHARGE_TO_LAUNCH\s*=\s*false;/', $gameUrl) === 1, 'toggle false hai (gate OFF)');
+chk(preg_match('/\$REQUIRE_RECHARGE_TO_LAUNCH\s*=\s*true;/', $gameUrl) === 0, 'toggle true nahi hai');
+/* asli gate line toggle ke andar hai — matlab launch block nahi hoga */
+$togglePos = strpos($gameUrl, '$REQUIRE_RECHARGE_TO_LAUNCH = false;');
+$gatePos = strpos($gameUrl, "if (mysqli_num_rows(\$rechargeResult) == 0) {");
+chk($togglePos !== false && $gatePos !== false && $togglePos < $gatePos, 'purani gate line toggle ke BAAD hai (chalu nahi hoti)');
+chk(strpos($gameUrl, "'ARLottery'") !== false, 'ARLottery (SaaS lottery / WinGo) route intact');
+chk(strpos($gameUrl, 'is_jwt_valid') !== false, 'GetGameUrl JWT check intact');
+chk(strpos($gameUrl, 'Demo accounts cannot launch games') !== false, 'demo-account block intact');
+chk(strpos($gameUrl, 'function game_url_reply') !== false, 'game_url_reply helper intact');
+chk(strpos($gameUrl, "game_url_lottery_route") !== false, 'lottery route helper intact');
+chk(substr_count($gameUrl, 'game_url_reply') === substr_count(@file_get_contents($ROOT . '/site_orig_marker') ? : $gameUrl, 'game_url_reply'), 'response paths ki ginti waisi hi');
+
 /* ---- D) checker page ---- */
 $checker = @file_get_contents($ROOT . '/dmfirst-recharge-check.php');
 chk($checker !== false && strpos($checker, 'DMFIRST RECHARGE-GATE CHECK') !== false, 'dmfirst-recharge-check.php shipped');

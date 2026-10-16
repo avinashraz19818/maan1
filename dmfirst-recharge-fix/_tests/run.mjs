@@ -15,6 +15,7 @@ const ROOT = process.env.SITEDIR || '/home/user/maan1/dmfirst-recharge-fix/site'
 const FILES = {
   '/site/devmaruf/api/webapi/GetAllowBetSetting.php': `${ROOT}/devmaruf/api/webapi/GetAllowBetSetting.php`,
   '/site/devmaruf/api/webapi/GetLoadedSetting.php': `${ROOT}/devmaruf/api/webapi/GetLoadedSetting.php`,
+  '/site/devmaruf/api/webapi/GetGameUrl.php': `${ROOT}/devmaruf/api/webapi/GetGameUrl.php`,
   '/site/dmfirst-recharge-check.php': `${ROOT}/dmfirst-recharge-check.php`,
 };
 
@@ -64,8 +65,11 @@ const checks = [
   ['checker junk branch gayab', /hata diya gaya/.test(gtext)],
   ['checker app faisla (0 recharge)', /user ka recharge ₹0 -> app ka faisla: open/.test(gtext)],
   ['checker app faisla (₹500)', /user ka recharge ₹500 -> app ka faisla: open/.test(gtext)],
-  ['checker verdict', /Gate OFF hai/.test(gtext)],
+  ['checker verdict', /DONO gate OFF hain|Gate OFF hai/.test(gtext)],
   ['checker legacy note', /legacy betting files/i.test(gtext)],
+  ['checker launch gate section', /LAUNCH GATE \(GETGAMEURL\.PHP\)/i.test(gtext)],
+  ['checker launch gate OFF detect', /band . \(toggle ke andar|hata diya gaya/.test(gtext)],
+  ['checker dono gate verdict', /DONO gate OFF hain/.test(gtext)],
   ['checker no PHP warning/notice', !/Warning|Notice|Fatal error|Deprecated/.test(gtext)],
 ];
 for (const [name, ok] of checks) { if (!ok) { fail++; } console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`); }

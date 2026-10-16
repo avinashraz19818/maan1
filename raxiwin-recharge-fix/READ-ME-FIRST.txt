@@ -1,0 +1,131 @@
+================================================================================
+  RaxiWin — "RECHARGE REQUIRED" GATE OFF (bina recharge ke game khulega)
+================================================================================
+Base: avinashraz19818/raxiwin  commit 35718c3
+DB schema change: koi nahi.  Frontend / config change: koi nahi.
+Ye ZIP pichhle lottery ZIP se ALAG hai — usme kuch nahi chheda gaya.
+
+--------------------------------------------------------------------------------
+1) POPUP KYUN AA RAHA THA ("Game requires recharge to enter")
+--------------------------------------------------------------------------------
+App (Vue bundle assets/js/index-BVjtEoMt.js) game kholne se pehle
+`GetAllowBetSetting` API se poochta hai, aur uske jawab par faisla karta hai.
+Asli JS logic:
+
+    const { allowNoRechargeGame: ae, userRechargeTimes: ue,
+            lowestRechargeAmountToGame: ge, userRechargeAmount: Te,
+            canDirectToGame: D } = te.data;
+    if (ae == "1" || D) return k(U);                        // game kholo
+    if (Number(ge) && Number(ge) > Te) return popup(gameT [₹ge]);  // "itna recharge karo"
+    if (Number(ge) === 0 && ue === 0)  return popup(code1003);     // "Game requires
+                                                                    //  recharge to enter"
+
+Aur server (developer-maruf/api/webapi/GetAllowBetSetting.php) purane values
+bhej raha tha:
+
+    canDirectToGame            = $userRechargeTimes > 1    // 2 recharge ke baad hi entry
+    allowNoRechargeGame        = "0"
+    lowestRechargeAmountToGame = "100"
+
+Matlab: jab tak aapne kam se kam 2 recharge na kar liye ho / ₹100+ ka recharge na
+ho, app game kholne hi nahi deta — yahi "recharge required" popup tha.
+
+--------------------------------------------------------------------------------
+2) AB KYA BHEJ RAHE HAIN (gate OFF)
+--------------------------------------------------------------------------------
+    canDirectToGame            = true      // har user seedha game me
+    allowNoRechargeGame        = "1"       // app ka pehla check isi par pass
+    lowestRechargeAmountToGame = "0"
+    userRechargeTimes          = (asli value, waise hi)
+    userRechargeAmount         = (asli value, waise hi)
+
+Yaani dashboard/report walay recharge numbers pehle jaise hi ate rahenge — sirf
+game-entry ka block hata diya. App ka pehla check (`ae == "1" || D`) pass ho jata
+hai, isliye dono popups kabhi nahi aate.
+
+Isi file me (optional) `needPopupFirstRecharge` bhi true -> false kiya gaya hai —
+wo login ke baad "first recharge" wala popup band karta hai. Us popup ko rakhna ho
+to `GetLoadedSetting.php` upload hi na karo (baaki patch phir bhi chalega).
+
+NOTE (scope): ye gate app me SAB games ke liye ek hi hai (WinGo, K3, D5,
+TrxWinGo...), isliye ek hi patch se sab jagah game khulega — alag-alag game ke
+liye alag setting nahi hai.
+
+--------------------------------------------------------------------------------
+3) PEHLE / BAAD
+--------------------------------------------------------------------------------
+   user (0 recharge, ₹0)  -> pehle: "Game requires recharge to enter"
+                          -> ab   : game khulta hai ✓
+   user (₹50 balance)     -> pehle: "₹100 recharge karo" popup
+                          -> ab   : game khulta hai ✓
+   purana user (recharge) -> dono me game khulta hai (kuch nahi badla) ✓
+
+--------------------------------------------------------------------------------
+4) UPLOAD (cPanel) — 2 min ka kaam
+--------------------------------------------------------------------------------
+1. Backup: jo files replace ho rahi hain unko rename kar lo (.bak):
+        developer-maruf/api/webapi/GetAllowBetSetting.php
+        developer-maruf/api/webapi/GetLoadedSetting.php   (agar upload kar rahe ho)
+2. ZIP ko public_html me upload karke Extract karo (paths root ke hisaab se hain):
+        developer-maruf/api/webapi/GetAllowBetSetting.php   <-- ASLI FIX
+        developer-maruf/api/webapi/GetLoadedSetting.php     <-- optional (popup)
+        raxiwin-recharge-check.php                          <-- sirf check ke liye
+3. Neeche wala check page kholo (VERDICT dekho), phir ZIP + READ-ME delete kar do.
+   Koi build step nahi, koi cache clear nahi (PHP file hai, turant asar karti hai).
+
+--------------------------------------------------------------------------------
+5) VERIFY (30 second, login ki zaroorat nahi)
+--------------------------------------------------------------------------------
+Kholo:   https://<aapki-site>/raxiwin-recharge-check.php?key=b7f3c1a94e2d5068
+
+Report batayegi:
+  * GetAllowBetSetting.php ka hash + mtime + app ki values (canDirectToGame etc.)
+  * "allowNoRechargeGame = "1" -> HA ✓" aur "app ka faisla: game SEEDHA khulega"
+  * first-recharge popup ON/OFF
+  * database: thevani me kitne recharge records / users (sanity)
+  * VERDICT: gate OFF hai ya file upload nahi hui
+
+App me test:
+  1. Jis user ko pehle popup aata tha, usse app me login karo.
+  2. WinGo khulo -> seedha game khulega (koi recharge popup nahi).
+  3. Ek baar game khel kar dekho — bet/result waisa hi chalega (is ZIP ne lottery
+     code ko chhua nahi).
+  4. Agar phir bhi popup aaye: app/browser purani JS cache kar raha hai -> app band
+     karke dobara kholo, ya browser me "clear site data" / incognito me test karo.
+
+--------------------------------------------------------------------------------
+6) VERIFY (maine kya chalaya)
+--------------------------------------------------------------------------------
+PHP 7.4 (aapke host ka version) AUR PHP 8.3 — dono par 25/25 checks PASS:
+  * Syntax: 3/3 files OK (dono versions)
+  * Gate values parse: allowNoRechargeGame "1", canDirectToGame true,
+    lowestRechargeAmountToGame "0", recharge history values ab bhi bhejte hain
+  * App ke JS gate ka wahi faisla dobara chalaya:
+      naya user (0 recharge, ₹0) -> OPEN
+      naya user (₹50)            -> OPEN
+      sirf allowNoRechargeGame "1" (doosra flag false) -> OPEN
+      purani values (0 recharge, ₹0, min ₹100) -> "₹100 recharge karo" popup
+      purani values (min ₹0, 0 recharge)       -> "Game requires recharge to enter"
+      purana user (already recharged)          -> OPEN
+  * File ka baki hissa intact: signature check, `is_jwt_valid` JWT check,
+    `thevani` query, GET par 405, 401 error path — sab waisa hi
+  * GetLoadedSetting: valid JSON, envelope waisa hi, needPopupFirstRecharge=false,
+    baaki 13 keys preserved, PHP code nahi
+  * Check page: galat key -> "forbidden", sahi key par gate OFF detect + verdict,
+    koi PHP warning/notice nahi (dono versions)
+
+--------------------------------------------------------------------------------
+7) ROLLBACK
+--------------------------------------------------------------------------------
+Backup (.bak) file wapas upload kar do — bas. Ya mujhe bolo, main "gate ON rakho
+par minimum ₹0" wala version bana dunga (usme sirf ₹100 ki shart hategi, 2-recharge
+wala rule bacha rahega).
+
+--------------------------------------------------------------------------------
+8) FILES IN THIS ZIP (4)
+--------------------------------------------------------------------------------
+   developer-maruf/api/webapi/GetAllowBetSetting.php   (gate OFF — asli fix)
+   developer-maruf/api/webapi/GetLoadedSetting.php     (first-recharge popup OFF — optional)
+   raxiwin-recharge-check.php                          (diagnostic — baad me delete)
+   READ-ME-FIRST.txt                                   (yahi file)
+================================================================================
